@@ -13,6 +13,21 @@ FastAPI service for literary world-building: create worlds (title, tone, era not
 uv sync
 ```
 
+For **local GGUF inference** (llama.cpp via `llama-cpp-python`), also install the optional extra:
+
+```bash
+uv sync --extra local-llm
+```
+
+### Local LLM (llama.cpp or vLLM)
+
+- **llama.cpp (GGUF, low resource):** set `WORLD_GENERATOR_GGUF_PATH` to a `.gguf` file on disk. With `WORLD_GENERATOR_LLM_BACKEND=auto` (default), the API uses it when the file exists. Tune CPU/GPU with `WORLD_GENERATOR_LLAMA_N_GPU_LAYERS` (default `0` = CPU only).
+- **vLLM:** run a vLLM OpenAI-compatible server, then set `WORLD_GENERATOR_VLLM_BASE_URL` (e.g. `http://127.0.0.1:8000/v1`) and `WORLD_GENERATOR_VLLM_MODEL` to the served model id. If no GGUF path is set, `auto` selects vLLM.
+
+Other useful variables: `WORLD_GENERATOR_LLM_BACKEND` (`auto` \| `none` \| `llama` \| `vllm`), `WORLD_GENERATOR_LLM_MAX_TOKENS`, `WORLD_GENERATOR_VLLM_API_KEY` (optional).
+
+`GET /health` includes `llm.mode` (`none` \| `llama` \| `vllm`) and `llm.enabled`. When an LLM is enabled, `POST /worlds/{id}/generate` uses it for glossary and timeline sections; otherwise the previous stubs are returned.
+
 ## Run the API
 
 Preferred (reload on code changes):

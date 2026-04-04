@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID, uuid4
 
 from app.schemas.world import WorldCreate, WorldRead
+
+if TYPE_CHECKING:
+    from app.services.llm_service import LLMService
 
 
 @dataclass
@@ -19,8 +22,9 @@ class _WorldRecord:
 
 
 class WorldService:
-    def __init__(self) -> None:
+    def __init__(self, llm: LLMService | None = None) -> None:
         self._store: dict[UUID, _WorldRecord] = {}
+        self._llm = llm
 
     def create(self, data: WorldCreate) -> WorldRead:
         wid = uuid4()
@@ -52,6 +56,11 @@ class WorldService:
         if not rec:
             return None
         sec: Literal["glossary", "timeline_hint"] = section or "glossary"
+        wread = self._to_read(rec)
+        if self._llm and self._llm.enabled():
+            generated = self._llm.generate_section(wread, sec)
+            if generated:
+                return sec, generated
         if sec == "glossary":
             text = (
                 f"[stub glossary for “{rec.title}”] "
