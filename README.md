@@ -21,7 +21,7 @@ uv sync --extra local-llm
 
 ### Local LLM (llama.cpp or vLLM)
 
-- **llama.cpp (GGUF, low resource):** set `WORLD_GENERATOR_GGUF_PATH` to a `.gguf` file on disk. With `WORLD_GENERATOR_LLM_BACKEND=auto` (default), the API uses it when the file exists. Tune CPU/GPU with `WORLD_GENERATOR_LLAMA_N_GPU_LAYERS` (default `0` = CPU only).
+- **llama.cpp (GGUF, low resource):** this repo includes `models/qwen2.5-14b-instruct-q5_k_m.gguf` as a **symlink** to `/Users/kishan/CYOA_TUI/qwen2.5-14b-instruct-q5_k_m.gguf` (stored as `../../CYOA_TUI/...` relative to `models/`). If that target exists, `WORLD_GENERATOR_GGUF_PATH` defaults to this path (no env needed). Override with `WORLD_GENERATOR_GGUF_PATH` if you use another file. With `WORLD_GENERATOR_LLM_BACKEND=auto` (default), the API uses GGUF when the resolved path exists. Tune CPU/GPU with `WORLD_GENERATOR_LLAMA_N_GPU_LAYERS` (default `0` = CPU only).
 - **vLLM:** run a vLLM OpenAI-compatible server, then set `WORLD_GENERATOR_VLLM_BASE_URL` (e.g. `http://127.0.0.1:8000/v1`) and `WORLD_GENERATOR_VLLM_MODEL` to the served model id. If no GGUF path is set, `auto` selects vLLM.
 
 Other useful variables: `WORLD_GENERATOR_LLM_BACKEND` (`auto` \| `none` \| `llama` \| `vllm`), `WORLD_GENERATOR_LLM_MAX_TOKENS`, `WORLD_GENERATOR_VLLM_API_KEY` (optional).
@@ -91,6 +91,7 @@ curl -s -X POST http://127.0.0.1:8000/worlds/WORLD_ID/generate \
 
 ## Project layout
 
+- `models/qwen2.5-14b-instruct-q5_k_m.gguf` — symlink to the GGUF in `CYOA_TUI` (see Local LLM above)
 - `app/main.py` — FastAPI app and router mounting
 - `app/api/routes/` — HTTP routes (`health`, `worlds`)
 - `app/schemas/` — Pydantic models
