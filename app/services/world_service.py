@@ -7,7 +7,11 @@ from uuid import UUID, uuid4
 
 from neo4j import Driver
 
-from app.schemas.world import WorldCreate, WorldRead
+from app.schemas.world import (
+    EntityRead,
+    WorldCreate,
+    WorldRead,
+)
 
 
 class WorldLLM(Protocol):
@@ -17,6 +21,10 @@ class WorldLLM(Protocol):
 
     def generate_section(
         self, world: WorldRead, section: Literal["glossary", "timeline_hint"]
+    ) -> str | None: ...
+
+    def generate_agentic(
+        self, world: WorldRead, context: str, instruction: str
     ) -> str | None: ...
 
 
@@ -147,3 +155,91 @@ class WorldService:
             seed=rec.seed,
             created_at=rec.created_at,
         )
+
+    def create_entity(
+        self, world_id: UUID, name: str, entity_type: str, description: str
+    ) -> EntityRead:
+        eid = uuid4()
+        now = datetime.now(UTC)
+        query = """
+        MATCH (w:World {id: $w_id})
+        CREATE (w)<-[:BELONGS_TO]-(e:Entity {
+            id: $e_id, world_id: $w_id, name: $name, 
+            entity_type: $entity_type, description: $description,
+            created_at: $created_at
+        })
+        RETURN e.id AS id, e.world_id AS world_id, e.name AS name,
+               e.entity_type AS entity_type, e.description AS description, 
+               e.created_at AS created_at
+        """
+        with self._driver.session() as session:
+            result = session.run(query, 
+                                 w_id=str(world_id), 
+                                 e_id=str(eid),
+                                 name=name,
+                                 entity_type=entity_type,
+                                 description=description,
+                                 created_at=now.isoformat())
+            record = result.single()
+            if not record:
+                raise ValueError("Failed to create entity. World not found?")
+            return EntityRead(
+                id=UUID(record["id"]),
+                world_id=UUID(record["world_id"]),
+                name=record["name"],
+                entity_type=record["entity_type"],
+                description=record["description"],
+                created_at=datetime.fromisoformat(record["created_at"])
+            )
+
+    def get_world_context(self, world_id: UUID) -> str:
+        """Retrieves existing lore/entities for a world via RAG-style DB query."""
+        query = """
+        MATCH (w:World {id: $id})<-[:BELONGS_TO]-(e:Entity)
+        RETURN e.name AS name, e.entity_type AS type, e.description AS desc
+        ORDER BY e.created_at ASC
+        """
+        entities = []
+        with self._driver.session() as session:
+            result = session.run(query, id=str(world_id))
+            for record in result:
+                entities.append(
+                    f"[{record['type']}] {record['name']}:\n{record['desc']}"
+                )
+        
+        if not entities:
+            return "No previous world lore has been generated yet."
+        return "\n\n".join(entities)
+
+    def agentic_generate(
+        self, world_id: UUID, instruction: str, save_as_type: str | None, save_as_name: str | None
+    ) -> tuple[str, UUID | None]:
+        rec = self._get_record(world_id)
+        if not rec:
+            raise ValueError("World not found")
+        wread = self._to_read(rec)
+
+        wcontext = self.get_world_context(world_id)
+
+        if self._llm and self._llm.enabled():
+            result_text = self._llm.generate_agentic(wread, wcontext, instruction)
+            if not result_text:
+                result_text = "[Agentic generation returned empty or failed.]"
+        else:
+            result_text = (
+                f"[Stub agentic generation for {rec.title}]\n"
+                f"Instruction: {instruction}\n"
+                "Would run Author -> Critic pipeline using world context here."
+            )
+
+        entity_id: UUID | None = None
+        if save_as_type and save_as_name:
+            entity = self.create_entity(
+                world_id=world_id,
+                name=save_as_name,
+                entity_type=save_as_type,
+                description=result_text
+            )
+            entity_id = entity.id
+
+        return result_text, entity_id

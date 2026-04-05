@@ -174,6 +174,57 @@ class LLMService:
             return None
         return text if text else None
 
+    def generate_agentic(self, world: WorldRead, context: str, instruction: str) -> str | None:
+        if not self.enabled() or self._backend is None:
+            return None
+        
+        # 1. Author Agent
+        author_system = (
+            "You are a creative world-building Author. "
+            "Generate detailed, rich lore based on the provided instruction and context."
+        )
+        author_user = (
+            f"World Knowledge Base (Context):\n{context}\n\n"
+            f"World Tone:\n{world.tone or 'Not specified'}\n\n"
+            f"Era Notes:\n{world.era_notes or 'Not specified'}\n\n"
+            f"Instruction: {instruction}\n\n"
+            "Please generate the requested lore now."
+        )
+        try:
+            author_text = self._backend.chat(
+                [{"role": "system", "content": author_system}, {"role": "user", "content": author_user}]
+            )
+        except Exception:
+            logger.exception("Author agent generation failed")
+            return None
+
+        if not author_text:
+            return None
+
+        # 2. Critic Agent
+        critic_system = (
+            "You are a critical world-building Editor. "
+            "Review the provided generated content against the world's tone and era notes. "
+            "If it fits well, output the original content mostly unchanged. If it contradicts "
+            "the tone, era, or provided context, rewrite it to fit better while retaining the core ideas. "
+            "Output ONLY the finalized prose, no prepended explanations or meta commentary."
+        )
+        critic_user = (
+            f"World Tone: {world.tone or 'Not specified'}\n"
+            f"Era Notes: {world.era_notes or 'Not specified'}\n\n"
+            f"Generated Content to Review:\n{author_text}\n\n"
+            "Review and output the finalized content."
+        )
+        try:
+            critic_text = self._backend.chat(
+                [{"role": "system", "content": critic_system}, {"role": "user", "content": critic_user}]
+            )
+        except Exception:
+            logger.exception("Critic agent generation failed")
+            return author_text  # Fallback to the author text if critic fails
+
+        return critic_text if critic_text else author_text
+
 
 def build_llm_service() -> LLMService:
     return LLMService(load_settings())

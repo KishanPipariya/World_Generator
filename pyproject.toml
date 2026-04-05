@@ -18,7 +18,12 @@ local-llm = [
 ]
 
 [dependency-groups]
-dev = ["httpx>=0.27.0", "pytest>=8.0.0"]
+dev = [
+    "httpx>=0.27.0",
+    "mypy>=1.20.0",
+    "pytest>=8.0.0",
+    "ruff>=0.15.9",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
