@@ -1,0 +1,141 @@
+.world-detail-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-secondary);
+  transition: color var(--transition-fast);
+  font-weight: 500;
+}
+
+.back-link:hover {
+  color: var(--text-primary);
+}
+
+.world-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2.5rem;
+  border-radius: var(--radius-lg);
+  flex-wrap: wrap;
+  gap: 1.5rem;
+}
+
+.title-section h1 {
+  font-size: 2.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.meta-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-muted);
+}
+
+.world-content-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .world-content-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.content-section, .agent-section {
+  padding: 2rem;
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.section-header h2 {
+  font-size: 1.5rem;
+}
+
+.text-primary {
+  color: var(--accent-primary);
+}
+
+.era-notes-text {
+  white-space: pre-wrap;
+  line-height: 1.8;
+}
+
+.world-sidebar {
+  position: sticky;
+  top: 6rem;
+}
+
+.agent-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.agent-icon {
+  color: var(--accent-tertiary);
+  filter: drop-shadow(0 0 8px rgba(236, 72, 153, 0.4));
+}
+
+.agent-desc {
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.agent-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.agent-form .btn {
+  width: 100%;
+}
+
+.pulsing {
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.5; }
+  100% { opacity: 1; }
+}
+
+.result-section {
+  margin-top: 1.5rem;
+  border-color: rgba(124, 58, 237, 0.3);
+  box-shadow: 0 0 20px rgba(124, 58, 237, 0.1);
+}
+
+.lore-content {
+  font-family: inherit;
+  white-space: pre-wrap;
+  line-height: 1.8;
+  color: var(--text-primary);
+  background: rgba(0,0,0,0.2);
+  padding: 1.5rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+}
