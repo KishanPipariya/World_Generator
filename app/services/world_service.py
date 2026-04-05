@@ -196,7 +196,7 @@ class WorldService:
         """Retrieves existing lore/entities for a world via RAG-style DB query."""
         query = """
         MATCH (w:World {id: $id})<-[:BELONGS_TO]-(e:Entity)
-        RETURN e.name AS name, e.entity_type AS type, e.description AS desc
+        RETURN e.name AS name, e.entity_type AS entity_type, e.description AS description
         ORDER BY e.created_at ASC
         """
         entities = []
@@ -204,7 +204,7 @@ class WorldService:
             result = session.run(query, id=str(world_id))
             for record in result:
                 entities.append(
-                    f"[{record['type']}] {record['name']}:\n{record['desc']}"
+                    f"[{record['entity_type']}] {record['name']}:\n{record['description']}"
                 )
         
         if not entities:

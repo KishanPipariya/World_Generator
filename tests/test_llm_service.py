@@ -198,3 +198,38 @@ def test_generate_section_returns_none_on_llama_exception(mock_chat, tmp_path) -
         }
     )
     assert svc.generate_section(w, "glossary") is None
+
+def test_generate_agentic_uses_author_and_critic(tmp_path) -> None:
+    fake_gguf = tmp_path / "unused.gguf"
+    fake_gguf.write_bytes(b"x")
+    s = _base_settings(
+        llm_backend="vllm",
+        gguf_path=str(fake_gguf),
+        vllm_base_url="http://example/v1",
+    )
+    mock_response_1 = MagicMock()
+    mock_response_1.json.return_value = {"choices": [{"message": {"content": "author output"}}]}
+    mock_response_2 = MagicMock()
+    mock_response_2.json.return_value = {"choices": [{"message": {"content": "critic output"}}]}
+    
+    mock_client = MagicMock()
+    mock_client.post.side_effect = [mock_response_1, mock_response_2]
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = None
+
+    w = WorldRead.model_validate(
+        {
+            "id": "550e8400-e29b-41d4-a716-446655440000",
+            "title": "My World",
+            "tone": "dark",
+            "era_notes": "fantasy",
+            "seed": None,
+            "created_at": "2020-01-01T00:00:00Z",
+        }
+    )
+
+    with patch("app.services.llm_service.httpx.Client", return_value=mock_client):
+        svc = LLMService(s)
+        out = svc.generate_agentic(w, "context string", "instruction test")
+
+    assert out == "critic output"

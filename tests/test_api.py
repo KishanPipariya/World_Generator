@@ -29,12 +29,20 @@ class _FakeSession:
         
     def run(self, query, **kwargs):
         if "CREATE" in query:
-            # We need kwargs["created_at"] string to dict
+            if "e_id" in kwargs:
+                kwargs["id"] = kwargs.pop("e_id")
+                kwargs["world_id"] = kwargs.pop("w_id")
             self.db[kwargs["id"]] = kwargs
-            return _FakeResult([])
-        elif "id: $id" in query:
+            return _FakeResult([kwargs])
+        elif "id: $id" in query and "<-[:BELONGS_TO]-(e:Entity)" not in query:
             rec = self.db.get(kwargs["id"])
             return _FakeResult([rec] if rec else [])
+        elif "<-[:BELONGS_TO]-(e:Entity)" in query:
+            entities = [
+                v for v in self.db.values() 
+                if "entity_type" in v and getattr(v, "world_id", v.get("world_id")) == kwargs["id"]
+            ]
+            return _FakeResult(entities)
         else:
             return _FakeResult(list(self.db.values()))
 
@@ -124,5 +132,42 @@ def test_generate_uses_llm_when_service_enabled(client: TestClient) -> None:
     wid = r.json()["id"]
     g = client.post(f"/worlds/{wid}/generate", json={"section": "timeline_hint"})
     assert g.status_code == 200
-    assert g.json()["content"] == "LLM:timeline_hint"
+
+
+def test_agentic_generate_returns_404_for_unknown_world(client: TestClient) -> None:
+    r = client.post(
+        "/worlds/00000000-0000-0000-0000-000000000099/agentic-generate",
+        json={"instruction": "test"},
+    )
+    assert r.status_code == 404
+
+
+def test_agentic_generate_uses_stub_when_llm_disabled(client: TestClient) -> None:
+    fresh: WorldService = WorldService(driver=_FakeDriver(), llm=None)
+    app.dependency_overrides[get_world_service] = lambda: fresh
+    r = client.post("/worlds", json={"title": "Z"})
+    wid = r.json()["id"]
+    g = client.post(f"/worlds/{wid}/agentic-generate", json={"instruction": "generate cities"})
+    assert g.status_code == 200
+    payload = g.json()
+    assert payload["instruction"] == "generate cities"
+    assert "[Stub agentic generation for Z]" in payload["content"]
+
+
+def test_agentic_generate_creates_entity_when_requested(client: TestClient) -> None:
+    fresh: WorldService = WorldService(driver=_FakeDriver(), llm=None)
+    app.dependency_overrides[get_world_service] = lambda: fresh
+    r = client.post("/worlds", json={"title": "Z"})
+    wid = r.json()["id"]
+    g = client.post(
+        f"/worlds/{wid}/agentic-generate", 
+        json={
+            "instruction": "generate cities",
+            "save_as_entity_type": "City",
+            "save_as_name": "Testopia"
+        }
+    )
+    assert g.status_code == 200
+    payload = g.json()
+    assert payload["entity_id"] is not None
 

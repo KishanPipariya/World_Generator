@@ -27,11 +27,20 @@ class _FakeSession:
         
     def run(self, query, **kwargs):
         if "CREATE" in query:
+            if "e_id" in kwargs:
+                kwargs["id"] = kwargs.pop("e_id")
+                kwargs["world_id"] = kwargs.pop("w_id")
             self.db[kwargs["id"]] = kwargs
-            return _FakeResult([])
-        elif "id: $id" in query:
+            return _FakeResult([kwargs])
+        elif "id: $id" in query and "<-[:BELONGS_TO]-(e:Entity)" not in query:
             rec = self.db.get(kwargs["id"])
             return _FakeResult([rec] if rec else [])
+        elif "<-[:BELONGS_TO]-(e:Entity)" in query:
+            entities = [
+                v for v in self.db.values() 
+                if "entity_type" in v and getattr(v, "world_id", v.get("world_id")) == kwargs["id"]
+            ]
+            return _FakeResult(entities)
         else:
             return _FakeResult(list(self.db.values()))
 
@@ -55,6 +64,11 @@ class _FakeLLM:
     def generate_section(self, world, section):  # noqa: ANN001
         self.calls.append((world.title, section))
         return self._content
+
+    def generate_agentic(self, world, context, instruction): # noqa: ANN001
+        self.calls.append((world.title, "agentic", instruction))
+        return self._content
+
 
 
 def test_generate_stub_uses_llm_when_enabled_and_non_empty() -> None:
@@ -94,3 +108,13 @@ def test_generate_stub_unknown_world_returns_none() -> None:
     svc = WorldService(driver=_FakeDriver(), llm=None)
     fake_id = UUID("00000000-0000-0000-0000-000000000001")
     assert svc.generate_stub(fake_id, "glossary") is None
+
+
+def test_agentic_generate_uses_llm_and_context() -> None:
+    llm = _FakeLLM("agentic content")
+    svc = WorldService(driver=_FakeDriver(), llm=llm)
+    w = svc.create(WorldCreate(title="Realm"))
+    text, eid = svc.agentic_generate(w.id, "some instruction", None, None)
+    assert text == "agentic content"
+    assert eid is None
+    assert llm.calls == [("Realm", "agentic", "some instruction")]
