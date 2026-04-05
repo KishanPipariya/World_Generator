@@ -11,3 +11,9 @@ wheels/
 
 #models
 *.gguf
+
+#Planning
+ROADMAP.md
+
+# Environment variables
+.env

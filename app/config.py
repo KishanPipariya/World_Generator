@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from dotenv import load_dotenv
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 # Symlink checked into the repo: models/qwen2.5-14b-instruct-q5_k_m.gguf → ../../CYOA_TUI/...
 _DEFAULT_GGUF = _REPO_ROOT / "models" / "qwen2.5-14b-instruct-q5_k_m.gguf"
@@ -21,7 +23,11 @@ def _resolved_gguf_path() -> str | None:
 
 @dataclass(frozen=True)
 class Settings:
-    """LLM settings from the environment."""
+    """Database and LLM settings from the environment."""
+
+    neo4j_uri: str
+    neo4j_user: str
+    neo4j_password: str
 
     llm_backend: Literal["auto", "none", "llama", "vllm"]
     gguf_path: str | None
@@ -35,6 +41,8 @@ class Settings:
 
 
 def load_settings() -> Settings:
+    load_dotenv()
+    
     raw = (os.environ.get("WORLD_GENERATOR_LLM_BACKEND") or "auto").strip().lower()
     if raw not in ("auto", "none", "llama", "vllm"):
         raw = "auto"
@@ -46,6 +54,9 @@ def load_settings() -> Settings:
     vllm_key = os.environ.get("WORLD_GENERATOR_VLLM_API_KEY")
 
     return Settings(
+        neo4j_uri=os.environ.get("WORLD_GENERATOR_NEO4J_URI", "bolt://localhost:7687"),
+        neo4j_user=os.environ.get("WORLD_GENERATOR_NEO4J_USER", "neo4j"),
+        neo4j_password=os.environ.get("WORLD_GENERATOR_NEO4J_PASSWORD", "password"),
         llm_backend=backend,
         gguf_path=gguf,
         vllm_base_url=vllm_url.rstrip("/") if vllm_url else None,

@@ -2,13 +2,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Literal
+from typing import Literal, Protocol
 from uuid import UUID, uuid4
+
+from neo4j import Driver
 
 from app.schemas.world import WorldCreate, WorldRead
 
-if TYPE_CHECKING:
-    from app.services.llm_service import LLMService
+
+class WorldLLM(Protocol):
+    """Minimal surface used by :class:`WorldService` for generation."""
+
+    def enabled(self) -> bool: ...
+
+    def generate_section(
+        self, world: WorldRead, section: Literal["glossary", "timeline_hint"]
+    ) -> str | None: ...
 
 
 @dataclass
@@ -22,13 +31,48 @@ class _WorldRecord:
 
 
 class WorldService:
-    def __init__(self, llm: LLMService | None = None) -> None:
-        self._store: dict[UUID, _WorldRecord] = {}
+    def __init__(self, driver: Driver, llm: WorldLLM | None = None) -> None:
+        self._driver = driver
         self._llm = llm
+
+    def _get_record(self, world_id: UUID) -> _WorldRecord | None:
+        query = """
+        MATCH (w:World {id: $id})
+        RETURN w.id AS id, w.title AS title, w.tone AS tone,
+               w.era_notes AS era_notes, w.seed AS seed, w.created_at AS created_at
+        """
+        with self._driver.session() as session:
+            result = session.run(query, id=str(world_id))
+            record = result.single()
+            if not record:
+                return None
+            return _WorldRecord(
+                id=UUID(record["id"]),
+                title=record["title"],
+                tone=record.get("tone"),
+                era_notes=record.get("era_notes"),
+                seed=record.get("seed"),
+                created_at=datetime.fromisoformat(record["created_at"])
+            )
 
     def create(self, data: WorldCreate) -> WorldRead:
         wid = uuid4()
         now = datetime.now(UTC)
+        query = """
+        CREATE (w:World {
+            id: $id, title: $title, tone: $tone, 
+            era_notes: $era_notes, seed: $seed, created_at: $created_at
+        })
+        """
+        with self._driver.session() as session:
+            session.run(query, 
+                        id=str(wid), 
+                        title=data.title, 
+                        tone=data.tone,
+                        era_notes=data.era_notes, 
+                        seed=data.seed, 
+                        created_at=now.isoformat())
+        
         rec = _WorldRecord(
             id=wid,
             title=data.title,
@@ -37,14 +81,32 @@ class WorldService:
             seed=data.seed,
             created_at=now,
         )
-        self._store[wid] = rec
         return self._to_read(rec)
 
     def list_worlds(self) -> list[WorldRead]:
-        return [self._to_read(r) for r in self._store.values()]
+        query = """
+        MATCH (w:World)
+        RETURN w.id AS id, w.title AS title, w.tone AS tone,
+               w.era_notes AS era_notes, w.seed AS seed, w.created_at AS created_at
+        ORDER BY w.created_at DESC
+        """
+        worlds = []
+        with self._driver.session() as session:
+            result = session.run(query)
+            for record in result:
+                rec = _WorldRecord(
+                    id=UUID(record["id"]),
+                    title=record["title"],
+                    tone=record.get("tone"),
+                    era_notes=record.get("era_notes"),
+                    seed=record.get("seed"),
+                    created_at=datetime.fromisoformat(record["created_at"])
+                )
+                worlds.append(self._to_read(rec))
+        return worlds
 
     def get(self, world_id: UUID) -> WorldRead | None:
-        rec = self._store.get(world_id)
+        rec = self._get_record(world_id)
         return self._to_read(rec) if rec else None
 
     def generate_stub(
@@ -52,7 +114,7 @@ class WorldService:
         world_id: UUID,
         section: Literal["glossary", "timeline_hint"] | None,
     ) -> tuple[Literal["glossary", "timeline_hint"], str] | None:
-        rec = self._store.get(world_id)
+        rec = self._get_record(world_id)
         if not rec:
             return None
         sec: Literal["glossary", "timeline_hint"] = section or "glossary"

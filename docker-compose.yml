@@ -1,0 +1,14 @@
+services:
+  db:
+    image: neo4j:5.12
+    container_name: world_generator_neo4j
+    ports:
+      - "7474:7474" # HTTP
+      - "7687:7687" # Bolt
+    environment:
+      - NEO4J_AUTH=${WORLD_GENERATOR_NEO4J_USER:-neo4j}/${WORLD_GENERATOR_NEO4J_PASSWORD:-password}
+    volumes:
+      - neo4j_data:/data
+
+volumes:
+  neo4j_data:
