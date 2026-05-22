@@ -28,27 +28,89 @@ class _FakeSession:
         pass
         
     def run(self, query, **kwargs):
-        if "CREATE" in query:
-            if "e_id" in kwargs:
-                kwargs["id"] = kwargs.pop("e_id")
-                kwargs["world_id"] = kwargs.pop("w_id")
-            self.db[kwargs["id"]] = kwargs
+        if "CREATE (w:World" in query:
+            self.db["worlds"][kwargs["id"]] = kwargs
             return _FakeResult([kwargs])
-        elif "id: $id" in query and "<-[:BELONGS_TO]-(e:Entity)" not in query:
-            rec = self.db.get(kwargs["id"])
+        if "CREATE (w)<-[:BELONGS_TO]-(e:Entity" in query:
+            if kwargs["w_id"] not in self.db["worlds"]:
+                return _FakeResult([])
+            record = {
+                "id": kwargs["e_id"],
+                "world_id": kwargs["w_id"],
+                "name": kwargs["name"],
+                "entity_type": kwargs["entity_type"],
+                "description": kwargs["description"],
+                "created_at": kwargs["created_at"],
+            }
+            self.db["entities"][kwargs["e_id"]] = record
+            return _FakeResult([record])
+        if "CREATE (source)-[r:RELATED_TO" in query:
+            source = self.db["entities"].get(kwargs["source_id"])
+            target = self.db["entities"].get(kwargs["target_id"])
+            if not source or not target or source["world_id"] != kwargs["w_id"] or target["world_id"] != kwargs["w_id"]:
+                return _FakeResult([])
+            record = {
+                "id": kwargs["r_id"],
+                "world_id": kwargs["w_id"],
+                "source_entity_id": source["id"],
+                "source_entity_name": source["name"],
+                "target_entity_id": target["id"],
+                "target_entity_name": target["name"],
+                "relation_type": kwargs["relation_type"],
+                "notes": kwargs["notes"],
+                "created_at": kwargs["created_at"],
+            }
+            self.db["relationships"][kwargs["r_id"]] = record
+            return _FakeResult([record])
+        if "SET e.name" in query:
+            record = self.db["entities"].get(kwargs["e_id"])
+            if not record or record["world_id"] != kwargs["w_id"]:
+                return _FakeResult([])
+            for field in ("name", "entity_type", "description"):
+                if kwargs[field] is not None:
+                    record[field] = kwargs[field]
+            return _FakeResult([record])
+        if "DELETE linked, e" in query:
+            record = self.db["entities"].pop(kwargs["e_id"], None)
+            if not record or record["world_id"] != kwargs["w_id"]:
+                return _FakeResult([{"deleted": 0}])
+            self.db["relationships"] = {
+                rid: rel
+                for rid, rel in self.db["relationships"].items()
+                if rel["source_entity_id"] != kwargs["e_id"] and rel["target_entity_id"] != kwargs["e_id"]
+            }
+            return _FakeResult([{"deleted": 1}])
+        if "DELETE r" in query:
+            record = self.db["relationships"].get(kwargs["r_id"])
+            if record and record["world_id"] == kwargs["w_id"]:
+                del self.db["relationships"][kwargs["r_id"]]
+                return _FakeResult([{"deleted": 1}])
+            return _FakeResult([{"deleted": 0}])
+        if "id" in kwargs and "<-[:BELONGS_TO]-(e:Entity)" in query:
+            return _FakeResult(
+                [v for v in self.db["entities"].values() if v["world_id"] == kwargs["id"]]
+            )
+        if "w_id" in kwargs and "<-[:BELONGS_TO]-(e:Entity" in query:
+            if kwargs["w_id"] not in self.db["worlds"]:
+                return _FakeResult([])
+            if "e_id" in kwargs:
+                rec = self.db["entities"].get(kwargs["e_id"])
+                return _FakeResult([rec] if rec and rec["world_id"] == kwargs["w_id"] else [])
+            return _FakeResult(
+                [v for v in self.db["entities"].values() if v["world_id"] == kwargs["w_id"]]
+            )
+        if "RELATED_TO {world_id: $w_id}" in query:
+            return _FakeResult(
+                [v for v in self.db["relationships"].values() if v["world_id"] == kwargs["w_id"]]
+            )
+        if "id: $id" in query:
+            rec = self.db["worlds"].get(kwargs["id"])
             return _FakeResult([rec] if rec else [])
-        elif "<-[:BELONGS_TO]-(e:Entity)" in query:
-            entities = [
-                v for v in self.db.values() 
-                if "entity_type" in v and getattr(v, "world_id", v.get("world_id")) == kwargs["id"]
-            ]
-            return _FakeResult(entities)
-        else:
-            return _FakeResult(list(self.db.values()))
+        return _FakeResult(list(self.db["worlds"].values()))
 
 class _FakeDriver:
     def __init__(self):
-        self.db = {}
+        self.db = {"worlds": {}, "entities": {}, "relationships": {}}
         
     def session(self):
         return _FakeSession(self.db)
@@ -171,3 +233,100 @@ def test_agentic_generate_creates_entity_when_requested(client: TestClient) -> N
     payload = g.json()
     assert payload["entity_id"] is not None
 
+    entities = client.get(f"/worlds/{wid}/entities")
+    assert entities.status_code == 200
+    assert entities.json()["entities"][0]["name"] == "Testopia"
+
+
+def test_entity_crud(client: TestClient) -> None:
+    r = client.post("/worlds", json={"title": "Z"})
+    wid = r.json()["id"]
+
+    created = client.post(
+        f"/worlds/{wid}/entities",
+        json={"name": "Northgate", "entity_type": "Location", "description": "A trade city."},
+    )
+    assert created.status_code == 201
+    eid = created.json()["id"]
+
+    listed = client.get(f"/worlds/{wid}/entities")
+    assert listed.status_code == 200
+    assert [entity["name"] for entity in listed.json()["entities"]] == ["Northgate"]
+
+    updated = client.patch(
+        f"/worlds/{wid}/entities/{eid}",
+        json={"description": "A fortified trade city."},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["description"] == "A fortified trade city."
+
+    deleted = client.delete(f"/worlds/{wid}/entities/{eid}")
+    assert deleted.status_code == 204
+    listed_again = client.get(f"/worlds/{wid}/entities")
+    assert listed_again.json()["entities"] == []
+
+
+def test_relationship_crud_and_export(client: TestClient) -> None:
+    r = client.post("/worlds", json={"title": "Z", "tone": "bright"})
+    wid = r.json()["id"]
+    source = client.post(
+        f"/worlds/{wid}/entities",
+        json={"name": "Asha", "entity_type": "Character", "description": "A scout."},
+    ).json()
+    target = client.post(
+        f"/worlds/{wid}/entities",
+        json={"name": "Northgate", "entity_type": "Location", "description": "A city."},
+    ).json()
+
+    created = client.post(
+        f"/worlds/{wid}/relationships",
+        json={
+            "source_entity_id": source["id"],
+            "target_entity_id": target["id"],
+            "relation_type": "protects",
+            "notes": "Assigned after the winter treaty.",
+        },
+    )
+    assert created.status_code == 201
+    rid = created.json()["id"]
+
+    listed = client.get(f"/worlds/{wid}/relationships")
+    assert listed.status_code == 200
+    assert listed.json()["relationships"][0]["relation_type"] == "protects"
+
+    exported = client.get(f"/worlds/{wid}/export/markdown")
+    assert exported.status_code == 200
+    content = exported.json()["content"]
+    assert "# Z" in content
+    assert "#### Asha" in content
+    assert "**Asha** protects **Northgate**" in content
+
+    deleted = client.delete(f"/worlds/{wid}/relationships/{rid}")
+    assert deleted.status_code == 204
+
+
+def test_entity_and_relationship_world_not_found(client: TestClient) -> None:
+    wid = "00000000-0000-0000-0000-000000000099"
+    assert client.get(f"/worlds/{wid}/entities").status_code == 404
+    assert client.get(f"/worlds/{wid}/relationships").status_code == 404
+    assert client.get(f"/worlds/{wid}/export/markdown").status_code == 404
+
+
+def test_cors_preflight_allowed_origin(client: TestClient) -> None:
+    headers = {
+        "Origin": "http://localhost:5174",
+        "Access-Control-Request-Method": "POST",
+    }
+    r = client.options("/worlds", headers=headers)
+    assert r.status_code == 200
+    assert r.headers["access-control-allow-origin"] == "http://localhost:5174"
+
+
+def test_cors_preflight_disallowed_origin(client: TestClient) -> None:
+    headers = {
+        "Origin": "http://some-other-origin.com",
+        "Access-Control-Request-Method": "POST",
+    }
+    r = client.options("/worlds", headers=headers)
+    assert r.status_code == 400
+    assert "Disallowed CORS origin" in r.text

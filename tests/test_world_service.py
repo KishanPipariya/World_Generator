@@ -26,27 +26,60 @@ class _FakeSession:
         pass
         
     def run(self, query, **kwargs):
-        if "CREATE" in query:
-            if "e_id" in kwargs:
-                kwargs["id"] = kwargs.pop("e_id")
-                kwargs["world_id"] = kwargs.pop("w_id")
-            self.db[kwargs["id"]] = kwargs
+        if "CREATE (w:World" in query:
+            self.db["worlds"][kwargs["id"]] = kwargs
             return _FakeResult([kwargs])
-        elif "id: $id" in query and "<-[:BELONGS_TO]-(e:Entity)" not in query:
-            rec = self.db.get(kwargs["id"])
+        if "CREATE (w)<-[:BELONGS_TO]-(e:Entity" in query:
+            if kwargs["w_id"] not in self.db["worlds"]:
+                return _FakeResult([])
+            record = {
+                "id": kwargs["e_id"],
+                "world_id": kwargs["w_id"],
+                "name": kwargs["name"],
+                "entity_type": kwargs["entity_type"],
+                "description": kwargs["description"],
+                "created_at": kwargs["created_at"],
+            }
+            self.db["entities"][kwargs["e_id"]] = record
+            return _FakeResult([record])
+        if "CREATE (source)-[r:RELATED_TO" in query:
+            source = self.db["entities"].get(kwargs["source_id"])
+            target = self.db["entities"].get(kwargs["target_id"])
+            if not source or not target or source["world_id"] != kwargs["w_id"] or target["world_id"] != kwargs["w_id"]:
+                return _FakeResult([])
+            record = {
+                "id": kwargs["r_id"],
+                "world_id": kwargs["w_id"],
+                "source_entity_id": source["id"],
+                "source_entity_name": source["name"],
+                "target_entity_id": target["id"],
+                "target_entity_name": target["name"],
+                "relation_type": kwargs["relation_type"],
+                "notes": kwargs["notes"],
+                "created_at": kwargs["created_at"],
+            }
+            self.db["relationships"][kwargs["r_id"]] = record
+            return _FakeResult([record])
+        if "id" in kwargs and "<-[:BELONGS_TO]-(e:Entity)" in query:
+            return _FakeResult(
+                [v for v in self.db["entities"].values() if v["world_id"] == kwargs["id"]]
+            )
+        if "w_id" in kwargs and "<-[:BELONGS_TO]-(e:Entity" in query:
+            return _FakeResult(
+                [v for v in self.db["entities"].values() if v["world_id"] == kwargs["w_id"]]
+            )
+        if "RELATED_TO {world_id: $w_id}" in query:
+            return _FakeResult(
+                [v for v in self.db["relationships"].values() if v["world_id"] == kwargs["w_id"]]
+            )
+        if "id: $id" in query:
+            rec = self.db["worlds"].get(kwargs["id"])
             return _FakeResult([rec] if rec else [])
-        elif "<-[:BELONGS_TO]-(e:Entity)" in query:
-            entities = [
-                v for v in self.db.values() 
-                if "entity_type" in v and getattr(v, "world_id", v.get("world_id")) == kwargs["id"]
-            ]
-            return _FakeResult(entities)
-        else:
-            return _FakeResult(list(self.db.values()))
+        return _FakeResult(list(self.db["worlds"].values()))
 
 class _FakeDriver:
     def __init__(self):
-        self.db = {}
+        self.db = {"worlds": {}, "entities": {}, "relationships": {}}
         
     def session(self):
         return _FakeSession(self.db)

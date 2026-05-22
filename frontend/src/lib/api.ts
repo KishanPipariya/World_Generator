@@ -22,6 +22,24 @@ export interface Entity {
   created_at: string;
 }
 
+export interface Relationship {
+  id: string;
+  world_id: string;
+  source_entity_id: string;
+  source_entity_name: string;
+  target_entity_id: string;
+  target_entity_name: string;
+  relation_type: string;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface MarkdownExport {
+  world_id: string;
+  filename: string;
+  content: string;
+}
+
 export const fetchWorlds = async (): Promise<World[]> => {
   const response = await api.get('/worlds');
   return response.data;
@@ -34,6 +52,62 @@ export const fetchWorld = async (id: string): Promise<World> => {
 
 export const createWorld = async (world: Partial<World>): Promise<World> => {
   const response = await api.post('/worlds', world);
+  return response.data;
+};
+
+export const fetchEntities = async (worldId: string): Promise<Entity[]> => {
+  const response = await api.get(`/worlds/${worldId}/entities`);
+  return response.data.entities;
+};
+
+export const createEntity = async (
+  worldId: string,
+  entity: Pick<Entity, 'name' | 'entity_type' | 'description'>,
+): Promise<Entity> => {
+  const response = await api.post(`/worlds/${worldId}/entities`, entity);
+  return response.data;
+};
+
+export const updateEntity = async (
+  worldId: string,
+  entityId: string,
+  entity: Partial<Pick<Entity, 'name' | 'entity_type' | 'description'>>,
+): Promise<Entity> => {
+  const response = await api.patch(`/worlds/${worldId}/entities/${entityId}`, entity);
+  return response.data;
+};
+
+export const deleteEntity = async (worldId: string, entityId: string): Promise<void> => {
+  await api.delete(`/worlds/${worldId}/entities/${entityId}`);
+};
+
+export const fetchRelationships = async (worldId: string): Promise<Relationship[]> => {
+  const response = await api.get(`/worlds/${worldId}/relationships`);
+  return response.data.relationships;
+};
+
+export const createRelationship = async (
+  worldId: string,
+  relationship: {
+    source_entity_id: string;
+    target_entity_id: string;
+    relation_type: string;
+    notes?: string;
+  },
+): Promise<Relationship> => {
+  const response = await api.post(`/worlds/${worldId}/relationships`, relationship);
+  return response.data;
+};
+
+export const deleteRelationship = async (
+  worldId: string,
+  relationshipId: string,
+): Promise<void> => {
+  await api.delete(`/worlds/${worldId}/relationships/${relationshipId}`);
+};
+
+export const exportMarkdown = async (worldId: string): Promise<MarkdownExport> => {
+  const response = await api.get(`/worlds/${worldId}/export/markdown`);
   return response.data;
 };
 

@@ -40,7 +40,7 @@ class GenerateResponse(BaseModel):
 
 class EntityCreate(BaseModel):
     name: str = Field(..., max_length=200)
-    entity_type: str = Field(..., max_length=100) # e.g. "City", "Faction", "Character"
+    entity_type: str = Field(..., max_length=100)
     description: str
 
 
@@ -48,8 +48,45 @@ class EntityRead(EntityCreate):
     id: UUID
     world_id: UUID
     created_at: datetime
-    
+
     model_config = {"from_attributes": True}
+
+
+class EntityUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=200)
+    entity_type: str | None = Field(default=None, max_length=100)
+    description: str | None = None
+
+
+class EntityListResponse(BaseModel):
+    entities: list[EntityRead]
+
+
+class RelationshipCreate(BaseModel):
+    source_entity_id: UUID
+    target_entity_id: UUID
+    relation_type: str = Field(..., max_length=100)
+    notes: str | None = Field(default=None, max_length=5000)
+
+
+class RelationshipRead(RelationshipCreate):
+    id: UUID
+    world_id: UUID
+    source_entity_name: str
+    target_entity_name: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class RelationshipListResponse(BaseModel):
+    relationships: list[RelationshipRead]
+
+
+class MarkdownExportResponse(BaseModel):
+    world_id: UUID
+    filename: str
+    content: str
 
 
 class AgenticGenerateRequest(BaseModel):
