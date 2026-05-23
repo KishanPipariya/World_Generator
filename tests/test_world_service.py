@@ -60,22 +60,22 @@ class _FakeSession:
             }
             self.db["relationships"][kwargs["r_id"]] = record
             return _FakeResult([record])
-        if "id" in kwargs and "<-[:BELONGS_TO]-(e:Entity)" in query:
+        if "id" in kwargs and "MATCH (w)<-[belongs]-(e)" in query:
             return _FakeResult(
                 [v for v in self.db["entities"].values() if v["world_id"] == kwargs["id"]]
             )
-        if "w_id" in kwargs and "<-[:BELONGS_TO]-(e:Entity" in query:
+        if "w_id" in kwargs and "MATCH (w)<-[belongs]-(e)" in query:
             return _FakeResult(
                 [v for v in self.db["entities"].values() if v["world_id"] == kwargs["w_id"]]
             )
-        if "RELATED_TO {world_id: $w_id}" in query:
+        if "RELATED_TO {world_id: $w_id}" in query or 'type(r) = "RELATED_TO"' in query:
             return _FakeResult(
                 [v for v in self.db["relationships"].values() if v["world_id"] == kwargs["w_id"]]
             )
-        if "id: $id" in query:
+        if "id: $id" in query or "properties(w).id = $id" in query:
             rec = self.db["worlds"].get(kwargs["id"])
-            return _FakeResult([rec] if rec else [])
-        return _FakeResult(list(self.db["worlds"].values()))
+            return _FakeResult([{"props": rec}] if rec else [])
+        return _FakeResult([{"props": world} for world in self.db["worlds"].values()])
 
 class _FakeDriver:
     def __init__(self):

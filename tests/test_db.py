@@ -57,11 +57,21 @@ def test_cypher_queries_structure():
     fake_id = UUID("00000000-0000-0000-0000-000000000001")
     svc.get(fake_id)
     called_queries_get = [call[0][0] for call in mock_session.run.call_args_list]
-    assert any("MATCH (w:World {id: $id})" in query for query in called_queries_get)
+    assert any(
+        "MATCH (w)" in query
+        and '"World" IN labels(w)' in query
+        and "properties(w).id = $id" in query
+        for query in called_queries_get
+    )
 
     # Reset mock for LIST
     mock_session.run.reset_mock()
     mock_session.run.return_value = iter([])
     svc.list_worlds()
     called_queries_list = [call[0][0] for call in mock_session.run.call_args_list]
-    assert any("MATCH (w:World)" in query and "ORDER BY w.created_at DESC" in query for query in called_queries_list)
+    assert any(
+        "MATCH (w)" in query
+        and '"World" IN labels(w)' in query
+        and "ORDER BY props.created_at DESC" in query
+        for query in called_queries_list
+    )

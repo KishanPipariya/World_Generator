@@ -47,23 +47,16 @@ class WorldService:
 
     def _get_record(self, world_id: UUID) -> _WorldRecord | None:
         query = """
-        MATCH (w:World {id: $id})
-        RETURN w.id AS id, w.title AS title, w.tone AS tone,
-               w.era_notes AS era_notes, w.seed AS seed, w.created_at AS created_at
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $id
+        RETURN properties(w) AS props
         """
         with self._driver.session() as session:
             result = session.run(query, id=str(world_id))
             record = result.single()
             if not record:
                 return None
-            return _WorldRecord(
-                id=UUID(record["id"]),
-                title=record["title"],
-                tone=record.get("tone"),
-                era_notes=record.get("era_notes"),
-                seed=record.get("seed"),
-                created_at=datetime.fromisoformat(record["created_at"])
-            )
+            return self._world_from_props(record.get("props", record))
 
     def create(self, data: WorldCreate) -> WorldRead:
         wid = uuid4()
@@ -95,24 +88,17 @@ class WorldService:
 
     def list_worlds(self) -> list[WorldRead]:
         query = """
-        MATCH (w:World)
-        RETURN w.id AS id, w.title AS title, w.tone AS tone,
-               w.era_notes AS era_notes, w.seed AS seed, w.created_at AS created_at
-        ORDER BY w.created_at DESC
+        MATCH (w)
+        WHERE "World" IN labels(w)
+        WITH properties(w) AS props
+        RETURN props
+        ORDER BY props.created_at DESC
         """
         worlds = []
         with self._driver.session() as session:
             result = session.run(query)
             for record in result:
-                rec = _WorldRecord(
-                    id=UUID(record["id"]),
-                    title=record["title"],
-                    tone=record.get("tone"),
-                    era_notes=record.get("era_notes"),
-                    seed=record.get("seed"),
-                    created_at=datetime.fromisoformat(record["created_at"])
-                )
-                worlds.append(self._to_read(rec))
+                worlds.append(self._to_read(self._world_from_props(record.get("props", record))))
         return worlds
 
     def get(self, world_id: UUID) -> WorldRead | None:
@@ -198,11 +184,13 @@ class WorldService:
         if not self._get_record(world_id):
             return None
         query = """
-        MATCH (w:World {id: $w_id})<-[:BELONGS_TO]-(e:Entity)
-        RETURN e.id AS id, e.world_id AS world_id, e.name AS name,
-               e.entity_type AS entity_type, e.description AS description,
-               e.created_at AS created_at
-        ORDER BY e.entity_type ASC, e.name ASC
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        MATCH (w)<-[belongs]-(e)
+        WHERE type(belongs) = "BELONGS_TO" AND "Entity" IN labels(e)
+        WITH properties(e) AS props
+        RETURN props
+        ORDER BY props.entity_type ASC, props.name ASC
         """
         with self._driver.session() as session:
             result = session.run(query, w_id=str(world_id))
@@ -215,13 +203,16 @@ class WorldService:
         if not updates:
             return self.get_entity(world_id, entity_id)
         query = """
-        MATCH (w:World {id: $w_id})<-[:BELONGS_TO]-(e:Entity {id: $e_id})
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        MATCH (w)<-[belongs]-(e)
+        WHERE type(belongs) = "BELONGS_TO"
+          AND "Entity" IN labels(e)
+          AND properties(e).id = $e_id
         SET e.name = coalesce($name, e.name),
             e.entity_type = coalesce($entity_type, e.entity_type),
             e.description = coalesce($description, e.description)
-        RETURN e.id AS id, e.world_id AS world_id, e.name AS name,
-               e.entity_type AS entity_type, e.description AS description,
-               e.created_at AS created_at
+        RETURN properties(e) AS props
         """
         with self._driver.session() as session:
             result = session.run(
@@ -237,10 +228,13 @@ class WorldService:
 
     def get_entity(self, world_id: UUID, entity_id: UUID) -> EntityRead | None:
         query = """
-        MATCH (w:World {id: $w_id})<-[:BELONGS_TO]-(e:Entity {id: $e_id})
-        RETURN e.id AS id, e.world_id AS world_id, e.name AS name,
-               e.entity_type AS entity_type, e.description AS description,
-               e.created_at AS created_at
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        MATCH (w)<-[belongs]-(e)
+        WHERE type(belongs) = "BELONGS_TO"
+          AND "Entity" IN labels(e)
+          AND properties(e).id = $e_id
+        RETURN properties(e) AS props
         """
         with self._driver.session() as session:
             result = session.run(query, w_id=str(world_id), e_id=str(entity_id))
@@ -251,7 +245,12 @@ class WorldService:
         if not self._get_record(world_id):
             return None
         query = """
-        MATCH (w:World {id: $w_id})<-[:BELONGS_TO]-(e:Entity {id: $e_id})
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        MATCH (w)<-[belongs]-(e)
+        WHERE type(belongs) = "BELONGS_TO"
+          AND "Entity" IN labels(e)
+          AND properties(e).id = $e_id
         OPTIONAL MATCH (e)-[linked]-()
         DELETE linked, e
         RETURN count(e) AS deleted
@@ -272,16 +271,24 @@ class WorldService:
         rid = uuid4()
         now = datetime.now(UTC)
         query = """
-        MATCH (w:World {id: $w_id})<-[:BELONGS_TO]-(source:Entity {id: $source_id})
-        MATCH (w)<-[:BELONGS_TO]-(target:Entity {id: $target_id})
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        MATCH (w)<-[source_belongs]-(source)
+        WHERE type(source_belongs) = "BELONGS_TO"
+          AND "Entity" IN labels(source)
+          AND properties(source).id = $source_id
+        MATCH (w)<-[target_belongs]-(target)
+        WHERE type(target_belongs) = "BELONGS_TO"
+          AND "Entity" IN labels(target)
+          AND properties(target).id = $target_id
         CREATE (source)-[r:RELATED_TO {
             id: $r_id, world_id: $w_id, relation_type: $relation_type,
             notes: $notes, created_at: $created_at
         }]->(target)
-        RETURN r.id AS id, r.world_id AS world_id, r.relation_type AS relation_type,
-               r.notes AS notes, r.created_at AS created_at,
-               source.id AS source_entity_id, source.name AS source_entity_name,
-               target.id AS target_entity_id, target.name AS target_entity_name
+        WITH properties(r) AS rel_props,
+             properties(source) AS source_props,
+             properties(target) AS target_props
+        RETURN rel_props, source_props, target_props
         """
         with self._driver.session() as session:
             result = session.run(
@@ -303,12 +310,16 @@ class WorldService:
         if not self._get_record(world_id):
             return None
         query = """
-        MATCH (source:Entity)-[r:RELATED_TO {world_id: $w_id}]->(target:Entity)
-        RETURN r.id AS id, r.world_id AS world_id, r.relation_type AS relation_type,
-               r.notes AS notes, r.created_at AS created_at,
-               source.id AS source_entity_id, source.name AS source_entity_name,
-               target.id AS target_entity_id, target.name AS target_entity_name
-        ORDER BY r.created_at DESC
+        MATCH (source)-[r]->(target)
+        WHERE type(r) = "RELATED_TO"
+          AND properties(r).world_id = $w_id
+          AND "Entity" IN labels(source)
+          AND "Entity" IN labels(target)
+        WITH properties(r) AS rel_props,
+             properties(source) AS source_props,
+             properties(target) AS target_props
+        RETURN rel_props, source_props, target_props
+        ORDER BY rel_props.created_at DESC
         """
         with self._driver.session() as session:
             result = session.run(query, w_id=str(world_id))
@@ -318,7 +329,10 @@ class WorldService:
         if not self._get_record(world_id):
             return None
         query = """
-        MATCH ()-[r:RELATED_TO {id: $r_id, world_id: $w_id}]->()
+        MATCH ()-[r]->()
+        WHERE type(r) = "RELATED_TO"
+          AND properties(r).id = $r_id
+          AND properties(r).world_id = $w_id
         DELETE r
         RETURN count(r) AS deleted
         """
@@ -377,16 +391,21 @@ class WorldService:
     def get_world_context(self, world_id: UUID) -> str:
         """Retrieves existing lore/entities for a world via RAG-style DB query."""
         query = """
-        MATCH (w:World {id: $id})<-[:BELONGS_TO]-(e:Entity)
-        RETURN e.name AS name, e.entity_type AS entity_type, e.description AS description
-        ORDER BY e.created_at ASC
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $id
+        MATCH (w)<-[belongs]-(e)
+        WHERE type(belongs) = "BELONGS_TO" AND "Entity" IN labels(e)
+        WITH properties(e) AS props
+        RETURN props
+        ORDER BY props.created_at ASC
         """
         entities = []
         with self._driver.session() as session:
             result = session.run(query, id=str(world_id))
             for record in result:
+                props = record.get("props", record)
                 entities.append(
-                    f"[{record['entity_type']}] {record['name']}:\n{record['description']}"
+                    f"[{props['entity_type']}] {props['name']}:\n{props['description']}"
                 )
         
         if not entities:
@@ -428,17 +447,33 @@ class WorldService:
 
     @staticmethod
     def _entity_from_record(record) -> EntityRead:  # noqa: ANN001
+        props = record.get("props", record)
         return EntityRead(
-            id=UUID(record["id"]),
-            world_id=UUID(record["world_id"]),
-            name=record["name"],
-            entity_type=record["entity_type"],
-            description=record["description"],
-            created_at=datetime.fromisoformat(record["created_at"]),
+            id=UUID(props["id"]),
+            world_id=UUID(props["world_id"]),
+            name=props["name"],
+            entity_type=props["entity_type"],
+            description=props["description"],
+            created_at=datetime.fromisoformat(props["created_at"]),
         )
 
     @staticmethod
     def _relationship_from_record(record) -> RelationshipRead:  # noqa: ANN001
+        if "rel_props" in record:
+            rel_props = record["rel_props"]
+            source_props = record["source_props"]
+            target_props = record["target_props"]
+            return RelationshipRead(
+                id=UUID(rel_props["id"]),
+                world_id=UUID(rel_props["world_id"]),
+                source_entity_id=UUID(source_props["id"]),
+                source_entity_name=source_props["name"],
+                target_entity_id=UUID(target_props["id"]),
+                target_entity_name=target_props["name"],
+                relation_type=rel_props["relation_type"],
+                notes=rel_props.get("notes"),
+                created_at=datetime.fromisoformat(rel_props["created_at"]),
+            )
         return RelationshipRead(
             id=UUID(record["id"]),
             world_id=UUID(record["world_id"]),
@@ -449,6 +484,17 @@ class WorldService:
             relation_type=record["relation_type"],
             notes=record.get("notes"),
             created_at=datetime.fromisoformat(record["created_at"]),
+        )
+
+    @staticmethod
+    def _world_from_props(props: dict[str, object]) -> _WorldRecord:
+        return _WorldRecord(
+            id=UUID(str(props["id"])),
+            title=str(props["title"]),
+            tone=str(props["tone"]) if props.get("tone") is not None else None,
+            era_notes=str(props["era_notes"]) if props.get("era_notes") is not None else None,
+            seed=str(props["seed"]) if props.get("seed") is not None else None,
+            created_at=datetime.fromisoformat(str(props["created_at"])),
         )
 
     @staticmethod

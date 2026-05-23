@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import os
+import sys
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app.config import Settings
 from app.schemas.world import WorldRead
-from app.services.llm_service import LLMService, _VllmBackend, _world_context
+from app.config import load_settings
+from app.services.llm_service import LLMService, _LlamaCppBackend, _VllmBackend, _world_context
 
 
 def _base_settings(**overrides: Any) -> Settings:
@@ -198,6 +204,80 @@ def test_generate_section_returns_none_on_llama_exception(mock_chat, tmp_path) -
         }
     )
     assert svc.generate_section(w, "glossary") is None
+
+
+def test_llama_backend_loads_configured_model_and_generates_text(monkeypatch, tmp_path) -> None:
+    fake_gguf = tmp_path / "model.gguf"
+    fake_gguf.write_bytes(b"GGUF")
+    captured: dict[str, Any] = {}
+
+    class _FakeLlama:
+        def __init__(self, **kwargs: Any) -> None:
+            captured.update(kwargs)
+
+        def create_chat_completion(self, **kwargs: Any) -> dict[str, Any]:
+            captured["completion"] = kwargs
+            return {"choices": [{"message": {"content": "  local text  "}}]}
+
+    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=_FakeLlama))
+    s = _base_settings(
+        llm_backend="llama",
+        gguf_path=str(fake_gguf),
+        llama_n_ctx=512,
+        llama_n_gpu_layers=0,
+        llama_max_tokens=16,
+        llama_temperature=0.1,
+    )
+
+    backend = _LlamaCppBackend(s)
+    out = backend.chat([{"role": "user", "content": "Say one short sentence."}])
+
+    assert out == "local text"
+    assert captured["model_path"] == str(fake_gguf)
+    assert captured["n_ctx"] == 512
+    assert captured["n_gpu_layers"] == 0
+    assert captured["completion"]["max_tokens"] == 16
+    assert captured["completion"]["messages"] == [
+        {"role": "user", "content": "Say one short sentence."}
+    ]
+
+
+@pytest.mark.local_llm
+def test_local_llm_loads_and_generates_text() -> None:
+    if os.environ.get("WORLD_GENERATOR_RUN_LOCAL_LLM_TESTS") != "1":
+        pytest.skip("Set WORLD_GENERATOR_RUN_LOCAL_LLM_TESTS=1 to load the local GGUF model.")
+    pytest.importorskip("llama_cpp")
+
+    settings = replace(
+        load_settings(),
+        llm_backend="llama",
+        llama_n_ctx=int(os.environ.get("WORLD_GENERATOR_TEST_LLAMA_N_CTX", "512")),
+        llama_max_tokens=int(os.environ.get("WORLD_GENERATOR_TEST_LLM_MAX_TOKENS", "24")),
+        llama_temperature=0.1,
+    )
+    if not settings.gguf_path or not os.path.isfile(settings.gguf_path):
+        pytest.fail("Local GGUF model path is not configured or does not exist.")
+
+    svc = LLMService(settings)
+    assert svc.mode == "llama"
+    assert svc.enabled()
+
+    world = WorldRead.model_validate(
+        {
+            "id": "550e8400-e29b-41d4-a716-446655440000",
+            "title": "Test Lantern",
+            "tone": "clear and concise",
+            "era_notes": "A small test world used only to verify local inference.",
+            "seed": None,
+            "created_at": "2020-01-01T00:00:00Z",
+        }
+    )
+
+    text = svc.generate_section(world, "glossary")
+
+    assert text is not None
+    assert text.strip()
+
 
 def test_generate_agentic_uses_author_and_critic(tmp_path) -> None:
     fake_gguf = tmp_path / "unused.gguf"
