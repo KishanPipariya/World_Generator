@@ -7,8 +7,11 @@ import {
   Clock,
   Download,
   Link2,
+  Network,
+  Pencil,
   Plus,
   Save,
+  Search,
   Sparkles,
   Trash2,
 } from 'lucide-react';
@@ -27,7 +30,9 @@ import {
   type Relationship,
   type World,
 } from '../lib/api';
+import { buildWorldGraph, searchWorldGraph } from '../lib/worldGraph';
 import './WorldDetail.css';
+import WorldGraphView from './WorldGraphView';
 
 const ENTITY_GROUPS = ['Character', 'Location', 'Faction', 'Concept', 'Event', 'Other'];
 const ENTITY_TYPES = ['Character', 'Location', 'Faction', 'Concept', 'Event', 'Other'];
@@ -39,6 +44,7 @@ const PROMPTS = [
 ];
 
 type EntityForm = Pick<Entity, 'name' | 'entity_type' | 'description'>;
+type WorkspaceView = 'editor' | 'graph';
 
 const blankEntity: EntityForm = {
   name: '',
@@ -62,6 +68,8 @@ const WorldDetail = () => {
   const [entities, setEntities] = useState<Entity[]>([]);
   const [relationships, setRelationships] = useState<Relationship[]>([]);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
+  const [activeView, setActiveView] = useState<WorkspaceView>('editor');
+  const [searchQuery, setSearchQuery] = useState('');
   const [entityForm, setEntityForm] = useState<EntityForm>(blankEntity);
   const [relationshipForm, setRelationshipForm] = useState({
     source_entity_id: '',
@@ -85,13 +93,35 @@ const WorldDetail = () => {
     [entities, selectedEntityId],
   );
 
+  const searchResult = useMemo(
+    () => searchWorldGraph(entities, relationships, searchQuery),
+    [entities, relationships, searchQuery],
+  );
+
   const groupedEntities = useMemo(
     () =>
       ENTITY_GROUPS.map((group) => ({
         group,
-        items: entities.filter((entity) => displayType(entity.entity_type) === group),
+        items: searchResult.filteredEntities.filter((entity) => displayType(entity.entity_type) === group),
       })),
-    [entities],
+    [searchResult.filteredEntities],
+  );
+
+  const graphData = useMemo(
+    () => buildWorldGraph(
+      entities,
+      relationships,
+      selectedEntityId,
+      searchResult.highlightedEntityIds,
+      searchResult.highlightedRelationshipIds,
+    ),
+    [
+      entities,
+      relationships,
+      selectedEntityId,
+      searchResult.highlightedEntityIds,
+      searchResult.highlightedRelationshipIds,
+    ],
   );
 
   const loadWorkspace = async (worldId: string) => {
@@ -326,8 +356,19 @@ const WorldDetail = () => {
               <Plus size={18} />
             </button>
           </div>
+          <label className="entity-search">
+            <Search size={16} />
+            <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search this world"
+              type="search"
+            />
+          </label>
           {entities.length === 0 ? (
             <p className="text-muted">No saved entities yet.</p>
+          ) : searchResult.query && searchResult.filteredEntities.length === 0 ? (
+            <p className="text-muted">No matches in this world.</p>
           ) : (
             groupedEntities.map(({ group, items }) => (
               items.length > 0 && (
@@ -335,7 +376,11 @@ const WorldDetail = () => {
                   <h3>{group}</h3>
                   {items.map((entity) => (
                     <button
-                      className={`entity-list-item ${selectedEntityId === entity.id ? 'active' : ''}`}
+                      className={[
+                        'entity-list-item',
+                        selectedEntityId === entity.id ? 'active' : '',
+                        searchResult.matchingEntityIds.has(entity.id) ? 'search-match' : '',
+                      ].filter(Boolean).join(' ')}
                       key={entity.id}
                       onClick={() => setSelectedEntityId(entity.id)}
                       type="button"
@@ -351,121 +396,171 @@ const WorldDetail = () => {
         </aside>
 
         <main className="editor-stack">
-          <section className="glass content-section">
-            <div className="section-header">
-              <BookOpen className="text-secondary" />
-              <h2>{selectedEntity ? 'Entity Detail' : 'New Entity'}</h2>
-            </div>
-            <form onSubmit={handleEntitySubmit} className="entity-form">
-              <div className="form-row">
-                <input
-                  value={entityForm.name}
-                  onChange={(event) => setEntityForm({ ...entityForm, name: event.target.value })}
-                  placeholder="Name"
-                  className="form-input"
-                  required
-                />
-                <select
-                  value={entityForm.entity_type}
-                  onChange={(event) => setEntityForm({ ...entityForm, entity_type: event.target.value })}
-                  className="form-input"
-                >
-                  {ENTITY_TYPES.map((type) => <option key={type}>{type}</option>)}
-                </select>
-              </div>
-              <textarea
-                value={entityForm.description}
-                onChange={(event) => setEntityForm({ ...entityForm, description: event.target.value })}
-                placeholder="Description"
-                rows={9}
-                className="form-input"
-              />
-              <div className="form-actions">
-                <button type="submit" className="btn btn-primary" disabled={busy}>
-                  <Save size={16} />
-                  {selectedEntity ? 'Save Entity' : 'Create Entity'}
-                </button>
-                {selectedEntity && (
-                  <button type="button" className="btn btn-danger" onClick={handleDeleteEntity} disabled={busy}>
-                    <Trash2 size={16} />
-                    Delete
+          <div className="workspace-tabs glass">
+            <button
+              className={activeView === 'editor' ? 'active' : ''}
+              onClick={() => setActiveView('editor')}
+              type="button"
+            >
+              <Pencil size={16} />
+              Editor
+            </button>
+            <button
+              className={activeView === 'graph' ? 'active' : ''}
+              onClick={() => setActiveView('graph')}
+              type="button"
+            >
+              <Network size={16} />
+              Graph
+            </button>
+          </div>
+
+          {activeView === 'editor' ? (
+            <>
+              <section className="glass content-section">
+                <div className="section-header">
+                  <BookOpen className="text-secondary" />
+                  <h2>{selectedEntity ? 'Entity Detail' : 'New Entity'}</h2>
+                </div>
+                <form onSubmit={handleEntitySubmit} className="entity-form">
+                  <div className="form-row">
+                    <input
+                      value={entityForm.name}
+                      onChange={(event) => setEntityForm({ ...entityForm, name: event.target.value })}
+                      placeholder="Name"
+                      className="form-input"
+                      required
+                    />
+                    <select
+                      value={entityForm.entity_type}
+                      onChange={(event) => setEntityForm({ ...entityForm, entity_type: event.target.value })}
+                      className="form-input"
+                    >
+                      {ENTITY_TYPES.map((type) => <option key={type}>{type}</option>)}
+                    </select>
+                  </div>
+                  <textarea
+                    value={entityForm.description}
+                    onChange={(event) => setEntityForm({ ...entityForm, description: event.target.value })}
+                    placeholder="Description"
+                    rows={9}
+                    className="form-input"
+                  />
+                  <div className="form-actions">
+                    <button type="submit" className="btn btn-primary" disabled={busy}>
+                      <Save size={16} />
+                      {selectedEntity ? 'Save Entity' : 'Create Entity'}
+                    </button>
+                    {selectedEntity && (
+                      <button type="button" className="btn btn-danger" onClick={handleDeleteEntity} disabled={busy}>
+                        <Trash2 size={16} />
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                </form>
+              </section>
+
+              <section className="glass content-section relationship-section">
+                <div className="section-header">
+                  <Link2 className="text-primary" />
+                  <h2>Relationships</h2>
+                </div>
+                <form onSubmit={handleRelationshipSubmit} className="relationship-form">
+                  <select
+                    value={relationshipForm.source_entity_id}
+                    onChange={(event) => setRelationshipForm({ ...relationshipForm, source_entity_id: event.target.value })}
+                    className="form-input"
+                    required
+                  >
+                    <option value="">Source</option>
+                    {entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
+                  </select>
+                  <input
+                    value={relationshipForm.relation_type}
+                    onChange={(event) => setRelationshipForm({ ...relationshipForm, relation_type: event.target.value })}
+                    placeholder="Relation"
+                    className="form-input"
+                    required
+                  />
+                  <select
+                    value={relationshipForm.target_entity_id}
+                    onChange={(event) => setRelationshipForm({ ...relationshipForm, target_entity_id: event.target.value })}
+                    className="form-input"
+                    required
+                  >
+                    <option value="">Target</option>
+                    {entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
+                  </select>
+                  <input
+                    value={relationshipForm.notes}
+                    onChange={(event) => setRelationshipForm({ ...relationshipForm, notes: event.target.value })}
+                    placeholder="Notes"
+                    className="form-input"
+                  />
+                  <button type="submit" className="btn btn-primary" disabled={busy || entities.length < 2}>
+                    <Plus size={16} />
+                    Add
                   </button>
+                </form>
+                <div className="relationship-list">
+                  {relationships.length === 0 ? (
+                    <p className="text-muted">No relationships yet.</p>
+                  ) : (
+                    relationships.map((relationship) => (
+                      <div
+                        className={[
+                          'relationship-item',
+                          searchResult.matchingRelationshipIds.has(relationship.id) ? 'search-match' : '',
+                        ].filter(Boolean).join(' ')}
+                        key={relationship.id}
+                      >
+                        <div>
+                          <strong>{relationship.source_entity_name}</strong>
+                          <span> {relationship.relation_type} </span>
+                          <strong>{relationship.target_entity_name}</strong>
+                          {relationship.notes && <p>{relationship.notes}</p>}
+                        </div>
+                        <button
+                          className="icon-button danger"
+                          onClick={async () => {
+                            if (!id) return;
+                            await deleteRelationship(id, relationship.id);
+                            setRelationships(await fetchRelationships(id));
+                          }}
+                          type="button"
+                          title="Delete relationship"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </section>
+            </>
+          ) : (
+            <section className="glass content-section graph-section">
+              <div className="section-header graph-header">
+                <div>
+                  <Network className="text-primary" />
+                  <h2>World Graph</h2>
+                </div>
+                {searchResult.query && (
+                  <span className="graph-search-summary">
+                    {searchResult.highlightedEntityIds.size} nodes, {searchResult.highlightedRelationshipIds.size} edges
+                  </span>
                 )}
               </div>
-            </form>
-          </section>
-
-          <section className="glass content-section relationship-section">
-            <div className="section-header">
-              <Link2 className="text-primary" />
-              <h2>Relationships</h2>
-            </div>
-            <form onSubmit={handleRelationshipSubmit} className="relationship-form">
-              <select
-                value={relationshipForm.source_entity_id}
-                onChange={(event) => setRelationshipForm({ ...relationshipForm, source_entity_id: event.target.value })}
-                className="form-input"
-                required
-              >
-                <option value="">Source</option>
-                {entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
-              </select>
-              <input
-                value={relationshipForm.relation_type}
-                onChange={(event) => setRelationshipForm({ ...relationshipForm, relation_type: event.target.value })}
-                placeholder="Relation"
-                className="form-input"
-                required
-              />
-              <select
-                value={relationshipForm.target_entity_id}
-                onChange={(event) => setRelationshipForm({ ...relationshipForm, target_entity_id: event.target.value })}
-                className="form-input"
-                required
-              >
-                <option value="">Target</option>
-                {entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
-              </select>
-              <input
-                value={relationshipForm.notes}
-                onChange={(event) => setRelationshipForm({ ...relationshipForm, notes: event.target.value })}
-                placeholder="Notes"
-                className="form-input"
-              />
-              <button type="submit" className="btn btn-primary" disabled={busy || entities.length < 2}>
-                <Plus size={16} />
-                Add
-              </button>
-            </form>
-            <div className="relationship-list">
-              {relationships.length === 0 ? (
-                <p className="text-muted">No relationships yet.</p>
-              ) : (
-                relationships.map((relationship) => (
-                  <div className="relationship-item" key={relationship.id}>
-                    <div>
-                      <strong>{relationship.source_entity_name}</strong>
-                      <span> {relationship.relation_type} </span>
-                      <strong>{relationship.target_entity_name}</strong>
-                      {relationship.notes && <p>{relationship.notes}</p>}
-                    </div>
-                    <button
-                      className="icon-button danger"
-                      onClick={async () => {
-                        if (!id) return;
-                        await deleteRelationship(id, relationship.id);
-                        setRelationships(await fetchRelationships(id));
-                      }}
-                      type="button"
-                      title="Delete relationship"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          </section>
+              <div className="graph-canvas">
+                <WorldGraphView
+                  nodes={graphData.nodes}
+                  edges={graphData.edges}
+                  onSelectEntity={setSelectedEntityId}
+                />
+              </div>
+            </section>
+          )}
         </main>
 
         <aside className="generator-stack">

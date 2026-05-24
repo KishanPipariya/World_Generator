@@ -115,6 +115,33 @@
   margin-bottom: 1rem;
 }
 
+.entity-search {
+  min-height: 2.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 1rem;
+  padding: 0 0.8rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+}
+
+.entity-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.entity-search input::placeholder {
+  color: var(--text-muted);
+}
+
 .text-primary {
   color: var(--accent-primary);
 }
@@ -154,6 +181,39 @@
 .entity-list-item.active {
   border-color: var(--border-color);
   background: rgba(255, 255, 255, 0.06);
+}
+
+.entity-list-item.search-match,
+.relationship-item.search-match {
+  border-color: rgba(236, 72, 153, 0.5);
+  background: rgba(236, 72, 153, 0.08);
+}
+
+.workspace-tabs {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  gap: 0.25rem;
+  padding: 0.35rem;
+  border-radius: var(--radius-md);
+}
+
+.workspace-tabs button {
+  min-height: 2.35rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 0 0.85rem;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.workspace-tabs button:hover,
+.workspace-tabs button.active {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
 }
 
 .entity-form,
@@ -245,6 +305,114 @@
   margin-top: 0.4rem;
   color: var(--text-muted);
   font-size: 0.9rem;
+}
+
+.graph-section {
+  min-height: 680px;
+}
+
+.graph-header {
+  justify-content: space-between;
+}
+
+.graph-header > div {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.graph-search-summary {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.graph-canvas {
+  height: 580px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: rgba(5, 5, 12, 0.48);
+}
+
+.graph-empty-state {
+  height: 100%;
+  min-height: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  text-align: center;
+}
+
+.world-graph-node {
+  min-width: 160px;
+  border: 1px solid rgba(148, 163, 184, 0.4) !important;
+  border-radius: var(--radius-md) !important;
+  background: rgba(31, 31, 46, 0.95) !important;
+  color: var(--text-primary) !important;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.24);
+}
+
+.entity-graph-node-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.8rem 0.9rem;
+}
+
+.entity-graph-node-content strong,
+.entity-graph-node-content span {
+  overflow-wrap: anywhere;
+}
+
+.entity-graph-node-content span {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.world-graph-node.highlighted {
+  border-color: rgba(236, 72, 153, 0.95) !important;
+  box-shadow: 0 0 0 2px rgba(236, 72, 153, 0.2), 0 14px 36px rgba(0, 0, 0, 0.28);
+}
+
+.world-graph-node.selected {
+  border-color: rgba(59, 130, 246, 0.95) !important;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.22), 0 14px 36px rgba(0, 0, 0, 0.28);
+}
+
+.world-graph-edge path {
+  stroke: rgba(148, 163, 184, 0.72);
+  stroke-width: 2;
+}
+
+.world-graph-edge.highlighted path {
+  stroke: #ec4899;
+  stroke-width: 3;
+}
+
+.react-flow__edge-textbg {
+  fill: rgba(19, 19, 28, 0.94);
+}
+
+.react-flow__edge-text {
+  fill: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.react-flow__controls,
+.react-flow__minimap {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: rgba(19, 19, 28, 0.88);
+}
+
+.react-flow__controls-button {
+  border-bottom-color: var(--border-color);
+  background: rgba(19, 19, 28, 0.95);
+  color: var(--text-primary);
 }
 
 .agent-icon {
