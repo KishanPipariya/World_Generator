@@ -52,10 +52,17 @@ docker-compose up -d
 Preferred (reload on code changes):
 
 ```bash
+cd /Users/kishan/world_generator
 uv run uvicorn app.main:app --reload
 ```
 
 Interactive docs: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+
+If you need to start it from another directory, pass the app directory explicitly:
+
+```bash
+uv run uvicorn app.main:app --reload --app-dir /Users/kishan/world_generator
+```
 
 ### 3. Frontend UI
 In a new terminal:
@@ -82,19 +89,19 @@ Other useful variables: `WORLD_GENERATOR_LLM_BACKEND` (`auto` | `none` | `llama`
 Health check:
 
 ```bash
-curl -s http://127.0.0.1:8000/health
+curl -s http://127.0.0.1:8000/api/v1/health
 ```
 
 List worlds:
 
 ```bash
-curl -s http://127.0.0.1:8000/worlds
+curl -s http://127.0.0.1:8000/api/v1/worlds
 ```
 
 Agentic generation (e.g. glossary):
 
 ```bash
-curl -s -X POST http://127.0.0.1:8000/worlds/WORLD_ID/generate \
+curl -s -X POST http://127.0.0.1:8000/api/v1/worlds/WORLD_ID/generate \
   -H "Content-Type: application/json" \
   -d '{"section": "glossary"}'
 ```

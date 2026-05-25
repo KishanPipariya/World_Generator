@@ -2,14 +2,18 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
+  Activity,
   Bot,
   BookOpen,
+  ClipboardCheck,
   Clock,
   Download,
+  FileText,
   Link2,
   Network,
   Pencil,
   Plus,
+  RefreshCcw,
   Save,
   Search,
   Sparkles,
@@ -21,12 +25,16 @@ import {
   deleteEntity,
   deleteRelationship,
   exportMarkdown,
+  fetchConsistencyReport,
   fetchEntities,
+  fetchHealth,
   fetchRelationships,
   fetchWorld,
   generateAgentic,
   updateEntity,
+  type ConsistencyReport,
   type Entity,
+  type HealthStatus,
   type Relationship,
   type World,
 } from '../lib/api';
@@ -37,9 +45,13 @@ import WorldGraphView from './WorldGraphView';
 const ENTITY_GROUPS = ['Character', 'Location', 'Faction', 'Concept', 'Event', 'Other'];
 const ENTITY_TYPES = ['Character', 'Location', 'Faction', 'Concept', 'Event', 'Other'];
 const PROMPTS = [
-  { label: 'Cities', value: 'Generate three distinct cities with political tensions and trade hooks.' },
+  { label: 'Cast', value: 'Generate five principal characters with secrets, public roles, and story pressure.' },
   { label: 'Factions', value: 'Generate three factions with goals, resources, and conflicts.' },
-  { label: 'Event', value: 'Generate a historical event that still shapes current conflicts.' },
+  { label: 'Settlements', value: 'Generate three distinct settlements with trade hooks and local tensions.' },
+  { label: 'Conflicts', value: 'Generate active conflicts that connect existing entities without resolving them.' },
+  { label: 'Timeline', value: 'Generate five timeline events that explain the current political situation.' },
+  { label: 'Relics', value: 'Generate relics or technologies with costs, limits, and owners.' },
+  { label: 'Hooks', value: 'Generate plot hooks that each use at least two saved entities.' },
   { label: 'Expand', value: 'Expand the selected entity with history, sensory details, and story hooks.' },
 ];
 
@@ -68,8 +80,12 @@ const WorldDetail = () => {
   const [entities, setEntities] = useState<Entity[]>([]);
   const [relationships, setRelationships] = useState<Relationship[]>([]);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
+  const [selectedRelationshipId, setSelectedRelationshipId] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<WorkspaceView>('editor');
   const [searchQuery, setSearchQuery] = useState('');
+  const [graphTypeFilter, setGraphTypeFilter] = useState('All');
+  const [graphPositions, setGraphPositions] = useState<Record<string, { x: number; y: number }>>({});
+  const [graphResetKey, setGraphResetKey] = useState(0);
   const [entityForm, setEntityForm] = useState<EntityForm>(blankEntity);
   const [relationshipForm, setRelationshipForm] = useState({
     source_entity_id: '',
@@ -82,6 +98,9 @@ const WorldDetail = () => {
   const [generatedName, setGeneratedName] = useState('');
   const [generatedType, setGeneratedType] = useState('Concept');
   const [agenticResult, setAgenticResult] = useState<{ content: string; entity_id?: string } | null>(null);
+  const [report, setReport] = useState<ConsistencyReport | null>(null);
+  const [markdownPreview, setMarkdownPreview] = useState<{ filename: string; content: string } | null>(null);
+  const [health, setHealth] = useState<HealthStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -91,6 +110,20 @@ const WorldDetail = () => {
   const selectedEntity = useMemo(
     () => entities.find((entity) => entity.id === selectedEntityId) ?? null,
     [entities, selectedEntityId],
+  );
+
+  const selectedRelationship = useMemo(
+    () => relationships.find((relationship) => relationship.id === selectedRelationshipId) ?? null,
+    [relationships, selectedRelationshipId],
+  );
+
+  const entityFormDirty = useMemo(
+    () => Boolean(selectedEntity) && (
+      entityForm.name !== selectedEntity?.name
+      || entityForm.entity_type !== selectedEntity?.entity_type
+      || entityForm.description !== selectedEntity?.description
+    ),
+    [entityForm, selectedEntity],
   );
 
   const searchResult = useMemo(
@@ -107,42 +140,102 @@ const WorldDetail = () => {
     [searchResult.filteredEntities],
   );
 
+  const graphEntities = useMemo(
+    () => entities.filter((entity) => (
+      graphTypeFilter === 'All' || displayType(entity.entity_type) === graphTypeFilter
+    )),
+    [entities, graphTypeFilter],
+  );
+
+  const graphRelationships = useMemo(() => {
+    const entityIds = new Set(graphEntities.map((entity) => entity.id));
+    return relationships.filter((relationship) => (
+      entityIds.has(relationship.source_entity_id) && entityIds.has(relationship.target_entity_id)
+    ));
+  }, [graphEntities, relationships]);
+
+  const graphHighlights = useMemo(() => {
+    const entityIds = new Set(searchResult.highlightedEntityIds);
+    const relationshipIds = new Set(searchResult.highlightedRelationshipIds);
+    if (selectedEntityId) {
+      entityIds.add(selectedEntityId);
+      relationships.forEach((relationship) => {
+        if (
+          relationship.source_entity_id === selectedEntityId
+          || relationship.target_entity_id === selectedEntityId
+        ) {
+          relationshipIds.add(relationship.id);
+          entityIds.add(relationship.source_entity_id);
+          entityIds.add(relationship.target_entity_id);
+        }
+      });
+    }
+    return { entityIds, relationshipIds };
+  }, [relationships, searchResult.highlightedEntityIds, searchResult.highlightedRelationshipIds, selectedEntityId]);
+
   const graphData = useMemo(
     () => buildWorldGraph(
-      entities,
-      relationships,
+      graphEntities,
+      graphRelationships,
       selectedEntityId,
-      searchResult.highlightedEntityIds,
-      searchResult.highlightedRelationshipIds,
+      selectedRelationshipId,
+      graphHighlights.entityIds,
+      graphHighlights.relationshipIds,
+      graphPositions,
     ),
     [
-      entities,
-      relationships,
+      graphEntities,
+      graphRelationships,
       selectedEntityId,
-      searchResult.highlightedEntityIds,
-      searchResult.highlightedRelationshipIds,
+      selectedRelationshipId,
+      graphHighlights.entityIds,
+      graphHighlights.relationshipIds,
+      graphPositions,
     ],
   );
 
   const loadWorkspace = async (worldId: string) => {
     setErrorMessage('');
-    const [worldData, entityData, relationshipData] = await Promise.all([
+    const [worldData, entityData, relationshipData, healthData] = await Promise.all([
       fetchWorld(worldId),
       fetchEntities(worldId),
       fetchRelationships(worldId),
+      fetchHealth().catch(() => null),
     ]);
     setWorld(worldData);
     setEntities(entityData);
     setRelationships(relationshipData);
+    setHealth(healthData);
     setSelectedEntityId((current) => current ?? entityData[0]?.id ?? null);
   };
 
   useEffect(() => {
     if (!id) return;
+    const savedPositions = window.localStorage.getItem(`world-graph-positions:${id}`);
+    try {
+      setGraphPositions(savedPositions ? JSON.parse(savedPositions) : {});
+    } catch {
+      setGraphPositions({});
+    }
     loadWorkspace(id)
       .catch(() => setErrorMessage('Unable to load this world.'))
       .finally(() => setLoading(false));
   }, [id]);
+
+  useEffect(() => {
+    if (!id) return;
+    window.localStorage.setItem(`world-graph-positions:${id}`, JSON.stringify(graphPositions));
+  }, [graphPositions, id]);
+
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!entityFormDirty) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [entityFormDirty]);
 
   useEffect(() => {
     if (selectedEntity) {
@@ -166,6 +259,12 @@ const WorldDetail = () => {
     setRelationships(relationshipData);
   };
 
+  const selectEntity = (entityId: string | null) => {
+    if (entityFormDirty && !window.confirm('Discard unsaved entity edits?')) return;
+    setSelectedEntityId(entityId);
+    setSelectedRelationshipId(null);
+  };
+
   const handleEntitySubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!id || !entityForm.name.trim()) return;
@@ -180,6 +279,26 @@ const WorldDetail = () => {
       setStatusMessage(selectedEntity ? 'Entity updated.' : 'Entity created.');
     } catch {
       setErrorMessage('Unable to save entity.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDuplicateEntity = async () => {
+    if (!id || !selectedEntity) return;
+    setBusy(true);
+    setErrorMessage('');
+    try {
+      const copy = await createEntity(id, {
+        name: `${selectedEntity.name} Copy`,
+        entity_type: selectedEntity.entity_type,
+        description: selectedEntity.description,
+      });
+      await refreshEntities();
+      setSelectedEntityId(copy.id);
+      setStatusMessage('Entity duplicated.');
+    } catch {
+      setErrorMessage('Unable to duplicate entity.');
     } finally {
       setBusy(false);
     }
@@ -248,14 +367,41 @@ const WorldDetail = () => {
     }
   };
 
+  const handleSaveGeneratedAsEntity = async () => {
+    if (!id || !agenticResult || !generatedName.trim()) return;
+    setBusy(true);
+    setErrorMessage('');
+    try {
+      const created = await createEntity(id, {
+        name: generatedName.trim(),
+        entity_type: generatedType,
+        description: agenticResult.content,
+      });
+      await refreshEntities();
+      setSelectedEntityId(created.id);
+      setStatusMessage('Generated lore saved as a new entity.');
+    } catch {
+      setErrorMessage('Unable to save generated lore as an entity.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleRelationshipSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!id || !relationshipForm.source_entity_id || !relationshipForm.target_entity_id) return;
+    if (
+      !id
+      || !relationshipForm.source_entity_id
+      || !relationshipForm.target_entity_id
+      || !relationshipForm.relation_type.trim()
+      || relationshipForm.source_entity_id === relationshipForm.target_entity_id
+    ) return;
     setBusy(true);
     setErrorMessage('');
     try {
       await createRelationship(id, {
         ...relationshipForm,
+        relation_type: relationshipForm.relation_type.trim(),
         notes: relationshipForm.notes || undefined,
       });
       setRelationshipForm({
@@ -294,6 +440,41 @@ const WorldDetail = () => {
     }
   };
 
+  const handlePreviewExport = async () => {
+    if (!id) return;
+    setBusy(true);
+    setErrorMessage('');
+    try {
+      const exported = await exportMarkdown(id);
+      setMarkdownPreview({ filename: exported.filename, content: exported.content });
+    } catch {
+      setErrorMessage('Unable to preview Markdown.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleConsistencyReport = async () => {
+    if (!id) return;
+    setBusy(true);
+    setErrorMessage('');
+    try {
+      setReport(await fetchConsistencyReport(id));
+    } catch {
+      setErrorMessage('Unable to run consistency report.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleResetGraph = () => {
+    setGraphPositions({});
+    setGraphResetKey((current) => current + 1);
+    if (id) {
+      window.localStorage.removeItem(`world-graph-positions:${id}`);
+    }
+  };
+
   if (loading) {
     return <div className="loading-state">Loading world...</div>;
   }
@@ -321,14 +502,26 @@ const WorldDetail = () => {
           <h1>{world.title}</h1>
           <div className="tags">
             {world.tone && <span className="badge badge-primary">{world.tone}</span>}
-            <span className="badge">{entities.length} entities</span>
-          </div>
+          <span className="badge">{entities.length} entities</span>
+          <span className={`badge ${health?.llm.enabled ? 'badge-good' : 'badge-muted'}`}>
+            <Activity size={13} />
+            {health ? `LLM ${health.llm.enabled ? 'ready' : 'stub'}` : 'Backend unknown'}
+          </span>
         </div>
-        <div className="meta-section">
+      </div>
+      <div className="meta-section">
           <div className="meta-item">
             <Clock size={16} />
             <span>Created {new Date(world.created_at).toLocaleDateString()}</span>
           </div>
+          <button className="btn btn-secondary" onClick={handleConsistencyReport} disabled={busy}>
+            <ClipboardCheck size={16} />
+            Report
+          </button>
+          <button className="btn btn-secondary" onClick={handlePreviewExport} disabled={busy}>
+            <FileText size={16} />
+            Preview
+          </button>
           <button className="btn btn-secondary" onClick={handleExport} disabled={busy}>
             <Download size={16} />
             Export
@@ -342,6 +535,49 @@ const WorldDetail = () => {
         </div>
       )}
 
+      {(report || markdownPreview) && (
+        <div className="demo-review-grid">
+          {report && (
+            <section className="glass content-section">
+              <div className="section-header">
+                <ClipboardCheck className="text-primary" />
+                <h2>Consistency Report</h2>
+                <span className="report-score">{report.score}</span>
+              </div>
+              <p className="text-secondary">{report.summary}</p>
+              <div className="issue-list">
+                {report.issues.length === 0 ? (
+                  <p className="text-muted">No issues found.</p>
+                ) : report.issues.slice(0, 8).map((issue) => (
+                  <button
+                    key={`${issue.code}-${issue.entity_id ?? issue.relationship_id ?? issue.message}`}
+                    className={`issue-item ${issue.severity}`}
+                    type="button"
+                    onClick={() => {
+                      if (issue.entity_id) selectEntity(issue.entity_id);
+                      if (issue.relationship_id) setSelectedRelationshipId(issue.relationship_id);
+                    }}
+                  >
+                    <span>{issue.severity}</span>
+                    {issue.message}
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+          {markdownPreview && (
+            <section className="glass content-section">
+              <div className="section-header">
+                <FileText className="text-primary" />
+                <h2>Markdown Preview</h2>
+              </div>
+              <p className="text-secondary">{markdownPreview.filename}</p>
+              <pre className="markdown-preview">{markdownPreview.content}</pre>
+            </section>
+          )}
+        </div>
+      )}
+
       <div className="workspace-grid">
         <aside className="entity-browser glass">
           <div className="panel-title">
@@ -350,7 +586,7 @@ const WorldDetail = () => {
             <button
               className="icon-button"
               type="button"
-              onClick={() => setSelectedEntityId(null)}
+              onClick={() => selectEntity(null)}
               title="New entity"
             >
               <Plus size={18} />
@@ -382,7 +618,7 @@ const WorldDetail = () => {
                         searchResult.matchingEntityIds.has(entity.id) ? 'search-match' : '',
                       ].filter(Boolean).join(' ')}
                       key={entity.id}
-                      onClick={() => setSelectedEntityId(entity.id)}
+                      onClick={() => selectEntity(entity.id)}
                       type="button"
                     >
                       <span>{entity.name}</span>
@@ -421,6 +657,7 @@ const WorldDetail = () => {
                 <div className="section-header">
                   <BookOpen className="text-secondary" />
                   <h2>{selectedEntity ? 'Entity Detail' : 'New Entity'}</h2>
+                  {entityFormDirty && <span className="dirty-indicator">Unsaved</span>}
                 </div>
                 <form onSubmit={handleEntitySubmit} className="entity-form">
                   <div className="form-row">
@@ -452,10 +689,16 @@ const WorldDetail = () => {
                       {selectedEntity ? 'Save Entity' : 'Create Entity'}
                     </button>
                     {selectedEntity && (
-                      <button type="button" className="btn btn-danger" onClick={handleDeleteEntity} disabled={busy}>
-                        <Trash2 size={16} />
-                        Delete
-                      </button>
+                      <>
+                        <button type="button" className="btn btn-secondary" onClick={handleDuplicateEntity} disabled={busy}>
+                          <Plus size={16} />
+                          Duplicate
+                        </button>
+                        <button type="button" className="btn btn-danger" onClick={handleDeleteEntity} disabled={busy}>
+                          <Trash2 size={16} />
+                          Delete
+                        </button>
+                      </>
                     )}
                   </div>
                 </form>
@@ -504,6 +747,11 @@ const WorldDetail = () => {
                   </button>
                 </form>
                 <div className="relationship-list">
+                  {selectedRelationship && (
+                    <p className="text-secondary">
+                      Selected: {selectedRelationship.source_entity_name} {selectedRelationship.relation_type} {selectedRelationship.target_entity_name}
+                    </p>
+                  )}
                   {relationships.length === 0 ? (
                     <p className="text-muted">No relationships yet.</p>
                   ) : (
@@ -511,9 +759,11 @@ const WorldDetail = () => {
                       <div
                         className={[
                           'relationship-item',
+                          selectedRelationshipId === relationship.id ? 'selected' : '',
                           searchResult.matchingRelationshipIds.has(relationship.id) ? 'search-match' : '',
                         ].filter(Boolean).join(' ')}
                         key={relationship.id}
+                        onClick={() => setSelectedRelationshipId(relationship.id)}
                       >
                         <div>
                           <strong>{relationship.source_entity_name}</strong>
@@ -523,7 +773,8 @@ const WorldDetail = () => {
                         </div>
                         <button
                           className="icon-button danger"
-                          onClick={async () => {
+                          onClick={async (event) => {
+                            event.stopPropagation();
                             if (!id) return;
                             await deleteRelationship(id, relationship.id);
                             setRelationships(await fetchRelationships(id));
@@ -551,12 +802,29 @@ const WorldDetail = () => {
                     {searchResult.highlightedEntityIds.size} nodes, {searchResult.highlightedRelationshipIds.size} edges
                   </span>
                 )}
+                <div className="graph-tools">
+                  <select
+                    className="form-input"
+                    value={graphTypeFilter}
+                    onChange={(event) => setGraphTypeFilter(event.target.value)}
+                    title="Filter graph by entity type"
+                  >
+                    <option>All</option>
+                    {ENTITY_TYPES.map((type) => <option key={type}>{type}</option>)}
+                  </select>
+                  <button className="icon-button" type="button" onClick={handleResetGraph} title="Reset layout">
+                    <RefreshCcw size={16} />
+                  </button>
+                </div>
               </div>
               <div className="graph-canvas">
                 <WorldGraphView
                   nodes={graphData.nodes}
                   edges={graphData.edges}
-                  onSelectEntity={setSelectedEntityId}
+                  onSelectEntity={selectEntity}
+                  onSelectRelationship={setSelectedRelationshipId}
+                  onPositionsChange={setGraphPositions}
+                  resetKey={graphResetKey}
                 />
               </div>
             </section>
@@ -629,6 +897,23 @@ const WorldDetail = () => {
                 <h2>Generated Lore</h2>
               </div>
               <pre className="lore-content">{agenticResult.content}</pre>
+              {!saveGenerated && (
+                <div className="form-row compact">
+                  <input
+                    value={generatedName}
+                    onChange={(event) => setGeneratedName(event.target.value)}
+                    placeholder="Entity name"
+                    className="form-input"
+                  />
+                  <select
+                    value={generatedType}
+                    onChange={(event) => setGeneratedType(event.target.value)}
+                    className="form-input"
+                  >
+                    {ENTITY_TYPES.map((type) => <option key={type}>{type}</option>)}
+                  </select>
+                </div>
+              )}
               <div className="form-actions">
                 <button
                   type="button"
@@ -645,6 +930,14 @@ const WorldDetail = () => {
                   disabled={!selectedEntity || busy}
                 >
                   Replace
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={handleSaveGeneratedAsEntity}
+                  disabled={!generatedName.trim() || busy}
+                >
+                  Save as New
                 </button>
               </div>
             </section>

@@ -8,6 +8,9 @@ from uuid import UUID, uuid4
 from neo4j import Driver
 
 from app.schemas.world import (
+    ConsistencyIssue,
+    ConsistencyReportResponse,
+    DemoWorldResponse,
     EntityRead,
     EntityUpdate,
     RelationshipRead,
@@ -85,6 +88,74 @@ class WorldService:
             created_at=now,
         )
         return self._to_read(rec)
+
+    def create_demo_world(self) -> DemoWorldResponse:
+        world = self.create(
+            WorldCreate(
+                title="The Ember Archipelago",
+                tone="mythic intrigue with practical survival stakes",
+                era_notes=(
+                    "Post-imperial island city-states compete for relic engines, "
+                    "storm-safe harbors, and legitimacy after the Ashen Crown fell."
+                ),
+                seed="demo-ember-archipelago",
+            )
+        )
+        entity_specs = [
+            (
+                "Mara Vey",
+                "Character",
+                "A lighthouse cartographer who can read stormlight residue. Mara wants to prove the old imperial sea charts were deliberately falsified.",
+            ),
+            (
+                "Ithoros",
+                "Location",
+                "A tiered harbor city built around a dormant volcanic vent and the last functioning ember engine.",
+            ),
+            (
+                "The Glass Concord",
+                "Faction",
+                "Merchant-magistrates who control mirror relays, debt ledgers, and most legal trade between islands.",
+            ),
+            (
+                "Ash Choir",
+                "Faction",
+                "Exiled ritual engineers who believe the fallen empire's relics are bound to human memory.",
+            ),
+            (
+                "The Ember Engine",
+                "Concept",
+                "A relic power core that burns stored vows instead of fuel, making every activation politically dangerous.",
+            ),
+            (
+                "Night of Falling Bells",
+                "Event",
+                "The coup that ended the Ashen Crown when every warning bell in the archipelago rang once and cracked.",
+            ),
+        ]
+        entities = [
+            self.create_entity(world.id, name, entity_type, description)
+            for name, entity_type, description in entity_specs
+        ]
+        by_name = {entity.name: entity for entity in entities}
+        relationship_specs = [
+            ("Mara Vey", "investigates", "Night of Falling Bells", "Her father's final chart marks impossible bell paths."),
+            ("The Glass Concord", "governs trade in", "Ithoros", "Their permits decide which ships reach the ember engine."),
+            ("Ash Choir", "seeks", "The Ember Engine", "They need it to restore memories erased during the coup."),
+            ("The Ember Engine", "powers", "Ithoros", "The city dims whenever public promises are broken."),
+            ("The Glass Concord", "hunts", "Ash Choir", "The Concord calls them terrorists; the Choir calls them archivists."),
+        ]
+        relationships = [
+            self.create_relationship(
+                world.id,
+                by_name[source].id,
+                by_name[target].id,
+                relation_type,
+                notes,
+            )
+            for source, relation_type, target, notes in relationship_specs
+        ]
+        return DemoWorldResponse(world=world, entities=entities, relationships=relationships)
 
     def list_worlds(self) -> list[WorldRead]:
         query = """
@@ -348,7 +419,7 @@ class WorldService:
         entities = self.list_entities(world_id) or []
         relationships = self.list_relationships(world_id) or []
 
-        lines = [f"# {rec.title}", ""]
+        lines = [f"# {rec.title}", "", "> Demo-ready world bible export.", ""]
         if rec.tone:
             lines.extend([f"**Tone:** {rec.tone}", ""])
         if rec.seed:
@@ -370,7 +441,24 @@ class WorldService:
                     continue
                 lines.extend([f"### {entity_type}", ""])
                 for entity in grouped:
+                    related = [
+                        relationship
+                        for relationship in relationships
+                        if relationship.source_entity_id == entity.id
+                        or relationship.target_entity_id == entity.id
+                    ]
                     lines.extend([f"#### {entity.name}", "", entity.description, ""])
+                    if related:
+                        lines.extend(["Related:", ""])
+                        for relationship in related:
+                            if relationship.source_entity_id == entity.id:
+                                other = relationship.target_entity_name
+                                rel = relationship.relation_type
+                            else:
+                                other = relationship.source_entity_name
+                                rel = f"is {relationship.relation_type} by"
+                            lines.append(f"- {rel} [[{other}]]")
+                        lines.append("")
 
         lines.extend(["## Relationships", ""])
         if not relationships:
@@ -378,15 +466,143 @@ class WorldService:
         else:
             for relationship in relationships:
                 lines.append(
-                    f"- **{relationship.source_entity_name}** "
+                    f"- [[{relationship.source_entity_name}]] "
                     f"{relationship.relation_type} "
-                    f"**{relationship.target_entity_name}**"
+                    f"[[{relationship.target_entity_name}]]"
                 )
                 if relationship.notes:
                     lines.append(f"  - {relationship.notes}")
             lines.append("")
 
         return "\n".join(lines).strip() + "\n"
+
+    def consistency_report(self, world_id: UUID) -> ConsistencyReportResponse | None:
+        rec = self._get_record(world_id)
+        if not rec:
+            return None
+        entities = self.list_entities(world_id) or []
+        relationships = self.list_relationships(world_id) or []
+        issues: list[ConsistencyIssue] = []
+
+        if not entities:
+            issues.append(
+                ConsistencyIssue(
+                    code="empty_world",
+                    severity="warning",
+                    message="No entities have been saved yet.",
+                )
+            )
+
+        name_to_entities: dict[str, list[EntityRead]] = {}
+        for entity in entities:
+            key = entity.name.strip().lower()
+            name_to_entities.setdefault(key, []).append(entity)
+            if not entity.description.strip():
+                issues.append(
+                    ConsistencyIssue(
+                        code="missing_description",
+                        severity="warning",
+                        message=f"{entity.name} is missing a description.",
+                        entity_id=entity.id,
+                    )
+                )
+            elif len(entity.description.strip()) < 40:
+                issues.append(
+                    ConsistencyIssue(
+                        code="thin_description",
+                        severity="info",
+                        message=f"{entity.name} has a short description.",
+                        entity_id=entity.id,
+                    )
+                )
+            if rec.tone and rec.tone.lower() not in entity.description.lower():
+                issues.append(
+                    ConsistencyIssue(
+                        code="tone_check",
+                        severity="info",
+                        message=f"{entity.name} may need a pass for the world's tone.",
+                        entity_id=entity.id,
+                    )
+                )
+
+        for duplicates in name_to_entities.values():
+            if len(duplicates) > 1:
+                for entity in duplicates:
+                    issues.append(
+                        ConsistencyIssue(
+                            code="duplicate_name",
+                            severity="error",
+                            message=f"Duplicate entity name: {entity.name}.",
+                            entity_id=entity.id,
+                        )
+                    )
+
+        connected_ids = {
+            relationship.source_entity_id
+            for relationship in relationships
+        } | {
+            relationship.target_entity_id
+            for relationship in relationships
+        }
+        for entity in entities:
+            if entity.id not in connected_ids:
+                issues.append(
+                    ConsistencyIssue(
+                        code="orphaned_entity",
+                        severity="warning",
+                        message=f"{entity.name} has no relationships.",
+                        entity_id=entity.id,
+                    )
+                )
+
+        pair_types: dict[tuple[UUID, UUID, str], RelationshipRead] = {}
+        for relationship in relationships:
+            if not relationship.relation_type.strip():
+                issues.append(
+                    ConsistencyIssue(
+                        code="missing_relation_type",
+                        severity="error",
+                        message="A relationship is missing its relation type.",
+                        relationship_id=relationship.id,
+                    )
+                )
+            elif len(relationship.relation_type.strip()) < 3:
+                issues.append(
+                    ConsistencyIssue(
+                        code="weak_relationship",
+                        severity="warning",
+                        message=f"Relationship '{relationship.relation_type}' is too terse for demo review.",
+                        relationship_id=relationship.id,
+                    )
+                )
+            key = (
+                relationship.source_entity_id,
+                relationship.target_entity_id,
+                relationship.relation_type.strip().lower(),
+            )
+            if key in pair_types:
+                issues.append(
+                    ConsistencyIssue(
+                        code="duplicate_relationship",
+                        severity="warning",
+                        message=(
+                            f"Duplicate relationship between {relationship.source_entity_name} "
+                            f"and {relationship.target_entity_name}."
+                        ),
+                        relationship_id=relationship.id,
+                    )
+                )
+            pair_types[key] = relationship
+
+        severity_cost = {"info": 2, "warning": 8, "error": 18}
+        score = max(0, 100 - sum(severity_cost[issue.severity] for issue in issues))
+        summary = "No consistency issues found." if not issues else f"{len(issues)} issue(s) found."
+        return ConsistencyReportResponse(
+            world_id=world_id,
+            score=score,
+            summary=summary,
+            issues=issues,
+        )
 
     def get_world_context(self, world_id: UUID) -> str:
         """Retrieves existing lore/entities for a world via RAG-style DB query."""
@@ -459,7 +675,8 @@ class WorldService:
 
     @staticmethod
     def _relationship_from_record(record) -> RelationshipRead:  # noqa: ANN001
-        if "rel_props" in record:
+        keys = set(record.keys()) if hasattr(record, "keys") else set(record)
+        if "rel_props" in keys:
             rel_props = record["rel_props"]
             source_props = record["source_props"]
             target_props = record["target_props"]

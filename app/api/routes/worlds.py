@@ -6,6 +6,8 @@ from app.deps import get_world_service
 from app.schemas.world import (
     AgenticGenerateRequest,
     AgenticGenerateResponse,
+    ConsistencyReportResponse,
+    DemoWorldResponse,
     EntityCreate,
     EntityListResponse,
     EntityRead,
@@ -36,6 +38,11 @@ def create_world(
 @router.get("", response_model=list[WorldRead])
 def list_worlds(svc: WorldService = Depends(get_world_service)) -> list[WorldRead]:
     return svc.list_worlds()
+
+
+@router.post("/demo", response_model=DemoWorldResponse, status_code=status.HTTP_201_CREATED)
+def create_demo_world(svc: WorldService = Depends(get_world_service)) -> DemoWorldResponse:
+    return svc.create_demo_world()
 
 
 @router.get("/{world_id}", response_model=WorldRead)
@@ -155,6 +162,17 @@ def list_relationships(
     if relationships is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
     return RelationshipListResponse(relationships=relationships)
+
+
+@router.get("/{world_id}/consistency", response_model=ConsistencyReportResponse)
+def consistency_report(
+    world_id: UUID,
+    svc: WorldService = Depends(get_world_service),
+) -> ConsistencyReportResponse:
+    report = svc.consistency_report(world_id)
+    if not report:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
+    return report
 
 
 @router.post(

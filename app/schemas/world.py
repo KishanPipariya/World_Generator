@@ -89,6 +89,27 @@ class MarkdownExportResponse(BaseModel):
     content: str
 
 
+class DemoWorldResponse(BaseModel):
+    world: WorldRead
+    entities: list[EntityRead]
+    relationships: list[RelationshipRead]
+
+
+class ConsistencyIssue(BaseModel):
+    code: str
+    severity: Literal["info", "warning", "error"]
+    message: str
+    entity_id: UUID | None = None
+    relationship_id: UUID | None = None
+
+
+class ConsistencyReportResponse(BaseModel):
+    world_id: UUID
+    score: int
+    summary: str
+    issues: list[ConsistencyIssue]
+
+
 class AgenticGenerateRequest(BaseModel):
     instruction: str = Field(
         ..., description="Instruction for the LLM, e.g. 'Generate 3 major cities for the northern continent.'"

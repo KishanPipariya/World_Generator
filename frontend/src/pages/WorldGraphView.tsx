@@ -20,6 +20,9 @@ interface WorldGraphViewProps {
   nodes: EntityGraphNode[];
   edges: RelationshipGraphEdge[];
   onSelectEntity: (entityId: string) => void;
+  onSelectRelationship: (relationshipId: string) => void;
+  onPositionsChange: (positions: Record<string, { x: number; y: number }>) => void;
+  resetKey: number;
 }
 
 const EntityNode = ({ data }: NodeProps<EntityGraphNode>) => (
@@ -35,13 +38,20 @@ const nodeTypes: NodeTypes = {
   entity: EntityNode,
 };
 
-const WorldGraphView = ({ nodes, edges, onSelectEntity }: WorldGraphViewProps) => {
+const WorldGraphView = ({
+  nodes,
+  edges,
+  onSelectEntity,
+  onSelectRelationship,
+  onPositionsChange,
+  resetKey,
+}: WorldGraphViewProps) => {
   const [flowNodes, setNodes, onNodesChange] = useNodesState<Node>(nodes);
   const [flowEdges, setEdges, onEdgesChange] = useEdgesState<Edge>(edges);
 
   useEffect(() => {
     setNodes(nodes);
-  }, [nodes, setNodes]);
+  }, [nodes, resetKey, setNodes]);
 
   useEffect(() => {
     setEdges(edges);
@@ -63,6 +73,19 @@ const WorldGraphView = ({ nodes, edges, onSelectEntity }: WorldGraphViewProps) =
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
       onNodeClick={(_, node) => onSelectEntity(node.id)}
+      onEdgeClick={(_, edge) => onSelectRelationship(edge.id)}
+      onNodeDragStop={(_, node) => {
+        const nextPositions = Object.fromEntries(
+          flowNodes
+            .map((flowNode) => (
+              flowNode.id === node.id
+                ? { ...flowNode, position: node.position }
+                : flowNode
+            ))
+            .map((flowNode) => [flowNode.id, flowNode.position]),
+        );
+        onPositionsChange(nextPositions);
+      }}
       nodeTypes={nodeTypes}
       fitView
       fitViewOptions={{ padding: 0.18 }}

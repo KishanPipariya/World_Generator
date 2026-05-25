@@ -40,6 +40,35 @@ export interface MarkdownExport {
   content: string;
 }
 
+export interface DemoWorld {
+  world: World;
+  entities: Entity[];
+  relationships: Relationship[];
+}
+
+export interface ConsistencyIssue {
+  code: string;
+  severity: 'info' | 'warning' | 'error';
+  message: string;
+  entity_id: string | null;
+  relationship_id: string | null;
+}
+
+export interface ConsistencyReport {
+  world_id: string;
+  score: number;
+  summary: string;
+  issues: ConsistencyIssue[];
+}
+
+export interface HealthStatus {
+  status: string;
+  llm: {
+    mode: string;
+    enabled: boolean;
+  };
+}
+
 export const fetchWorlds = async (): Promise<World[]> => {
   const response = await api.get('/worlds');
   return response.data;
@@ -52,6 +81,11 @@ export const fetchWorld = async (id: string): Promise<World> => {
 
 export const createWorld = async (world: Partial<World>): Promise<World> => {
   const response = await api.post('/worlds', world);
+  return response.data;
+};
+
+export const createDemoWorld = async (): Promise<DemoWorld> => {
+  const response = await api.post('/worlds/demo');
   return response.data;
 };
 
@@ -108,6 +142,16 @@ export const deleteRelationship = async (
 
 export const exportMarkdown = async (worldId: string): Promise<MarkdownExport> => {
   const response = await api.get(`/worlds/${worldId}/export/markdown`);
+  return response.data;
+};
+
+export const fetchConsistencyReport = async (worldId: string): Promise<ConsistencyReport> => {
+  const response = await api.get(`/worlds/${worldId}/consistency`);
+  return response.data;
+};
+
+export const fetchHealth = async (): Promise<HealthStatus> => {
+  const response = await api.get('/health');
   return response.data;
 };
 

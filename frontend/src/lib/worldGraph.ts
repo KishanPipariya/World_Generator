@@ -10,6 +10,7 @@ export type EntityGraphNode = Node<{
 
 export type RelationshipGraphEdge = Edge<{
   highlighted: boolean;
+  selected: boolean;
 }>;
 
 export interface WorldSearchResult {
@@ -88,8 +89,10 @@ export const buildWorldGraph = (
   entities: Entity[],
   relationships: Relationship[],
   selectedEntityId: string | null,
+  selectedRelationshipId: string | null,
   highlightedEntityIds: Set<string>,
   highlightedRelationshipIds: Set<string>,
+  positions: Record<string, { x: number; y: number }> = {},
 ) => {
   const columns = Math.max(1, Math.ceil(Math.sqrt(entities.length)));
   const xSpacing = 240;
@@ -103,8 +106,8 @@ export const buildWorldGraph = (
       id: entity.id,
       type: 'entity',
       position: {
-        x: column * xSpacing,
-        y: row * ySpacing,
+        x: positions[entity.id]?.x ?? column * xSpacing,
+        y: positions[entity.id]?.y ?? row * ySpacing,
       },
       data: {
         label: entity.name,
@@ -135,12 +138,14 @@ export const buildWorldGraph = (
       className: [
         'world-graph-edge',
         highlightedRelationshipIds.has(relationship.id) ? 'highlighted' : '',
+        selectedRelationshipId === relationship.id ? 'selected' : '',
       ].filter(Boolean).join(' '),
       markerEnd: {
         type: 'arrowclosed',
       },
       data: {
         highlighted: highlightedRelationshipIds.has(relationship.id),
+        selected: selectedRelationshipId === relationship.id,
       },
     }));
 
