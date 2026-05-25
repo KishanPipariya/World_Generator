@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
   Activity,
@@ -23,6 +23,7 @@ import {
   createEntity,
   createRelationship,
   deleteEntity,
+  deleteWorld,
   deleteRelationship,
   exportMarkdown,
   fetchConsistencyReport,
@@ -45,14 +46,22 @@ import WorldGraphView from './WorldGraphView';
 const ENTITY_GROUPS = ['Character', 'Location', 'Faction', 'Concept', 'Event', 'Other'];
 const ENTITY_TYPES = ['Character', 'Location', 'Faction', 'Concept', 'Event', 'Other'];
 const PROMPTS = [
-  { label: 'Cast', value: 'Generate five principal characters with secrets, public roles, and story pressure.' },
-  { label: 'Factions', value: 'Generate three factions with goals, resources, and conflicts.' },
-  { label: 'Settlements', value: 'Generate three distinct settlements with trade hooks and local tensions.' },
-  { label: 'Conflicts', value: 'Generate active conflicts that connect existing entities without resolving them.' },
-  { label: 'Timeline', value: 'Generate five timeline events that explain the current political situation.' },
-  { label: 'Relics', value: 'Generate relics or technologies with costs, limits, and owners.' },
-  { label: 'Hooks', value: 'Generate plot hooks that each use at least two saved entities.' },
-  { label: 'Expand', value: 'Expand the selected entity with history, sensory details, and story hooks.' },
+  {
+    label: 'Faction Pressure',
+    value: 'For The Ember Archipelago, generate three factions with public goals, secret leverage, scarce resources, and one unresolved conflict tying each faction to existing canon.',
+  },
+  {
+    label: 'Timeline Crisis',
+    value: 'For The Ember Archipelago, generate five escalating timeline events around the Night of Falling Bells, each with a cause, consequence, and entity most changed by it.',
+  },
+  {
+    label: 'Secrets',
+    value: 'For The Ember Archipelago, generate four canon-safe secrets. Each secret should name who knows it, who would suffer if revealed, and which saved entity it complicates.',
+  },
+  {
+    label: 'Expand Selected',
+    value: 'Expand the selected entity with history, sensory details, story pressure, a secret, and two relationship hooks that can be added to canon.',
+  },
 ];
 
 type EntityForm = Pick<Entity, 'name' | 'entity_type' | 'description'>;
@@ -76,6 +85,7 @@ const displayType = (type: string) => {
 
 const WorldDetail = () => {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const [world, setWorld] = useState<World | null>(null);
   const [entities, setEntities] = useState<Entity[]>([]);
   const [relationships, setRelationships] = useState<Relationship[]>([]);
@@ -320,6 +330,21 @@ const WorldDetail = () => {
     }
   };
 
+  const handleDeleteWorld = async () => {
+    if (!id || !world) return;
+    if (!window.confirm(`Delete "${world.title}" and all of its entities and relationships?`)) return;
+    setBusy(true);
+    setErrorMessage('');
+    try {
+      await deleteWorld(id);
+      navigate('/worlds');
+    } catch {
+      setErrorMessage('Unable to delete this world.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleAgenticGen = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!id || !agenticInstruction.trim()) return;
@@ -348,8 +373,20 @@ const WorldDetail = () => {
     }
   };
 
+  const resetGeneratorState = () => {
+    setAgenticInstruction('');
+    setSaveGenerated(false);
+    setGeneratedName('');
+    setGeneratedType('Concept');
+    setAgenticResult(null);
+  };
+
   const handleApplyGenerated = async (mode: 'append' | 'replace') => {
     if (!id || !selectedEntity || !agenticResult) return;
+    if (
+      mode === 'replace'
+      && !window.confirm(`Replace the full description for "${selectedEntity.name}" with the generated lore?`)
+    ) return;
     const description =
       mode === 'append'
         ? `${selectedEntity.description.trim()}\n\n${agenticResult.content}`.trim()
@@ -360,6 +397,7 @@ const WorldDetail = () => {
       await refreshEntities();
       setSelectedEntityId(updated.id);
       setStatusMessage(mode === 'append' ? 'Generated lore appended.' : 'Description replaced.');
+      resetGeneratorState();
     } catch {
       setErrorMessage('Unable to apply generated lore.');
     } finally {
@@ -380,6 +418,7 @@ const WorldDetail = () => {
       await refreshEntities();
       setSelectedEntityId(created.id);
       setStatusMessage('Generated lore saved as a new entity.');
+      resetGeneratorState();
     } catch {
       setErrorMessage('Unable to save generated lore as an entity.');
     } finally {
@@ -447,6 +486,7 @@ const WorldDetail = () => {
     try {
       const exported = await exportMarkdown(id);
       setMarkdownPreview({ filename: exported.filename, content: exported.content });
+      setStatusMessage('Markdown preview ready.');
     } catch {
       setErrorMessage('Unable to preview Markdown.');
     } finally {
@@ -460,10 +500,37 @@ const WorldDetail = () => {
     setErrorMessage('');
     try {
       setReport(await fetchConsistencyReport(id));
+      setStatusMessage('Consistency report ready.');
     } catch {
       setErrorMessage('Unable to run consistency report.');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const downloadMarkdown = (filename: string, content: string) => {
+    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+    setStatusMessage('Markdown exported.');
+  };
+
+  const handleIssueSelect = (issue: ConsistencyReport['issues'][number]) => {
+    setActiveView('editor');
+    if (issue.entity_id) {
+      selectEntity(issue.entity_id);
+      return;
+    }
+    if (issue.relationship_id) {
+      const relationship = relationships.find((item) => item.id === issue.relationship_id);
+      if (relationship) {
+        selectEntity(relationship.source_entity_id);
+      }
+      setSelectedRelationshipId(issue.relationship_id);
     }
   };
 
@@ -476,7 +543,7 @@ const WorldDetail = () => {
   };
 
   if (loading) {
-    return <div className="loading-state">Loading world...</div>;
+    return <div className="loading-state">Loading world workspace...</div>;
   }
 
   if (!world) {
@@ -526,6 +593,10 @@ const WorldDetail = () => {
             <Download size={16} />
             Export
           </button>
+          <button className="btn btn-danger" onClick={handleDeleteWorld} disabled={busy} type="button">
+            <Trash2 size={16} />
+            Delete
+          </button>
         </div>
       </div>
 
@@ -548,18 +619,18 @@ const WorldDetail = () => {
               <div className="issue-list">
                 {report.issues.length === 0 ? (
                   <p className="text-muted">No issues found.</p>
-                ) : report.issues.slice(0, 8).map((issue) => (
+                ) : report.issues.map((issue) => (
                   <button
                     key={`${issue.code}-${issue.entity_id ?? issue.relationship_id ?? issue.message}`}
                     className={`issue-item ${issue.severity}`}
                     type="button"
-                    onClick={() => {
-                      if (issue.entity_id) selectEntity(issue.entity_id);
-                      if (issue.relationship_id) setSelectedRelationshipId(issue.relationship_id);
-                    }}
+                    onClick={() => handleIssueSelect(issue)}
                   >
-                    <span>{issue.severity}</span>
-                    {issue.message}
+                    <span className="issue-severity">{issue.severity}</span>
+                    <span className="issue-body">
+                      <span className="issue-code">{issue.code.replaceAll('_', ' ')}</span>
+                      {issue.message}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -570,6 +641,14 @@ const WorldDetail = () => {
               <div className="section-header">
                 <FileText className="text-primary" />
                 <h2>Markdown Preview</h2>
+                <button
+                  className="btn btn-secondary compact-button"
+                  type="button"
+                  onClick={() => downloadMarkdown(markdownPreview.filename, markdownPreview.content)}
+                >
+                  <Download size={16} />
+                  Download
+                </button>
               </div>
               <p className="text-secondary">{markdownPreview.filename}</p>
               <pre className="markdown-preview">{markdownPreview.content}</pre>
@@ -776,8 +855,17 @@ const WorldDetail = () => {
                           onClick={async (event) => {
                             event.stopPropagation();
                             if (!id) return;
-                            await deleteRelationship(id, relationship.id);
-                            setRelationships(await fetchRelationships(id));
+                            setErrorMessage('');
+                            try {
+                              await deleteRelationship(id, relationship.id);
+                              setRelationships(await fetchRelationships(id));
+                              if (selectedRelationshipId === relationship.id) {
+                                setSelectedRelationshipId(null);
+                              }
+                              setStatusMessage('Relationship deleted.');
+                            } catch {
+                              setErrorMessage('Unable to delete relationship.');
+                            }
                           }}
                           type="button"
                           title="Delete relationship"
@@ -895,6 +983,7 @@ const WorldDetail = () => {
               <div className="section-header">
                 <Sparkles className="text-primary" />
                 <h2>Generated Lore</h2>
+                <span className="review-badge">Ready for review</span>
               </div>
               <pre className="lore-content">{agenticResult.content}</pre>
               {!saveGenerated && (
@@ -925,7 +1014,7 @@ const WorldDetail = () => {
                 </button>
                 <button
                   type="button"
-                  className="btn btn-secondary"
+                  className="btn btn-danger"
                   onClick={() => handleApplyGenerated('replace')}
                   disabled={!selectedEntity || busy}
                 >

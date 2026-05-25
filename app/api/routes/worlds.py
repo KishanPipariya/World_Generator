@@ -56,6 +56,15 @@ def get_world(
     return w
 
 
+@router.delete("/{world_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_world(
+    world_id: UUID,
+    svc: WorldService = Depends(get_world_service),
+) -> None:
+    if not svc.delete_world(world_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
+
+
 @router.post("/{world_id}/generate", response_model=GenerateResponse)
 def generate_stub(
     world_id: UUID,

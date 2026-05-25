@@ -14,6 +14,7 @@ wheels/
 
 #Planning
 ROADMAP.md
+docs/FUTURE_FEATURES.md
 
 # Environment variables
 .env

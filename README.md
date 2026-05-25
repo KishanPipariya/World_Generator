@@ -2,6 +2,8 @@
 
 A full-stack application and API service for literary world-building. Create worlds (title, tone, era notes, optional seed), explore them through a web UI, and dynamically generate lore (glossary, timeline hints, entities) using an advanced agentic multi-model pipeline featuring Author and Critic models, with RAG-based consistency backed by a Neo4j graph database.
 
+For planned product direction, see the [future feature roadmap for solo writers](docs/FUTURE_FEATURES.md).
+
 ## Requirements
 
 - Python 3.13+

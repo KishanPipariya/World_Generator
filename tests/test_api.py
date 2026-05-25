@@ -71,6 +71,28 @@ class _FakeSession:
                 if kwargs[field] is not None:
                     record[field] = kwargs[field]
             return _FakeResult([record])
+        if "DETACH DELETE w" in query:
+            world = self.db["worlds"].pop(kwargs["w_id"], None)
+            if not world:
+                return _FakeResult([])
+            return _FakeResult([{"deleted": 1}])
+        if "DETACH DELETE e" in query:
+            entity_ids = {
+                entity_id
+                for entity_id, entity in self.db["entities"].items()
+                if entity["world_id"] == kwargs["w_id"]
+            }
+            self.db["entities"] = {
+                entity_id: entity
+                for entity_id, entity in self.db["entities"].items()
+                if entity_id not in entity_ids
+            }
+            self.db["relationships"] = {
+                relationship_id: relationship
+                for relationship_id, relationship in self.db["relationships"].items()
+                if relationship["rel_props"]["world_id"] != kwargs["w_id"]
+            }
+            return _FakeResult([])
         if "DELETE linked, e" in query:
             record = self.db["entities"].pop(kwargs["e_id"], None)
             if not record or record["world_id"] != kwargs["w_id"]:
@@ -78,7 +100,10 @@ class _FakeSession:
             self.db["relationships"] = {
                 rid: rel
                 for rid, rel in self.db["relationships"].items()
-                if rel["source_entity_id"] != kwargs["e_id"] and rel["target_entity_id"] != kwargs["e_id"]
+                if (
+                    rel["source_props"]["id"] != kwargs["e_id"]
+                    and rel["target_props"]["id"] != kwargs["e_id"]
+                )
             }
             return _FakeResult([{"deleted": 1}])
         if "DELETE r" in query:
@@ -159,6 +184,33 @@ def test_create_list_get_world(client: TestClient) -> None:
     r_get = client.get(f"/worlds/{wid}")
     assert r_get.status_code == 200
     assert r_get.json()["id"] == wid
+
+
+def test_delete_world_removes_world_and_children(client: TestClient) -> None:
+    r = client.post("/worlds", json={"title": "Delete Me"})
+    wid = r.json()["id"]
+    source = client.post(
+        f"/worlds/{wid}/entities",
+        json={"name": "Asha", "entity_type": "Character", "description": "A scout."},
+    ).json()
+    target = client.post(
+        f"/worlds/{wid}/entities",
+        json={"name": "Northgate", "entity_type": "Location", "description": "A city."},
+    ).json()
+    client.post(
+        f"/worlds/{wid}/relationships",
+        json={
+            "source_entity_id": source["id"],
+            "target_entity_id": target["id"],
+            "relation_type": "guards",
+        },
+    )
+
+    deleted = client.delete(f"/worlds/{wid}")
+    assert deleted.status_code == 204
+    assert client.get(f"/worlds/{wid}").status_code == 404
+    assert client.get(f"/worlds/{wid}/entities").status_code == 404
+    assert client.delete(f"/worlds/{wid}").status_code == 404
 
 
 def test_create_demo_world_seeds_entities_and_relationships(client: TestClient) -> None:
@@ -313,6 +365,9 @@ def test_relationship_crud_and_export(client: TestClient) -> None:
     assert exported.status_code == 200
     content = exported.json()["content"]
     assert "# Z" in content
+    assert "## World Metadata" in content
+    assert "- Entities: 2" in content
+    assert "- Relationships: 1" in content
     assert "#### Asha" in content
     assert "[[Asha]] protects [[Northgate]]" in content
 
@@ -340,9 +395,68 @@ def test_consistency_report_flags_demo_review_issues(client: TestClient) -> None
     assert report.status_code == 200
     payload = report.json()
     assert payload["score"] < 100
+    assert "Score" in payload["summary"]
     codes = {issue["code"] for issue in payload["issues"]}
     assert {"missing_description", "orphaned_entity"}.issubset(codes)
     assert any(issue["entity_id"] == entity["id"] for issue in payload["issues"])
+
+
+def test_consistency_report_flags_canon_dashboard_issues(client: TestClient) -> None:
+    r = client.post("/worlds", json={"title": "Canon", "tone": "bright"})
+    wid = r.json()["id"]
+    character = client.post(
+        f"/worlds/{wid}/entities",
+        json={
+            "name": "Asha",
+            "entity_type": "Character",
+            "description": "A scout from Northgate with a careful eye.",
+        },
+    ).json()
+    faction = client.post(
+        f"/worlds/{wid}/entities",
+        json={
+            "name": "The Bell Guard",
+            "entity_type": "Faction",
+            "description": "A city watch with polished armor.",
+        },
+    ).json()
+    event = client.post(
+        f"/worlds/{wid}/entities",
+        json={
+            "name": "The Gate Riot",
+            "entity_type": "Event",
+            "description": "Citizens clashed at Northgate over ration ledgers.",
+        },
+    ).json()
+
+    first_relationship = client.post(
+        f"/worlds/{wid}/relationships",
+        json={
+            "source_entity_id": character["id"],
+            "target_entity_id": faction["id"],
+            "relation_type": "protects",
+        },
+    ).json()
+    second_relationship = client.post(
+        f"/worlds/{wid}/relationships",
+        json={
+            "source_entity_id": faction["id"],
+            "target_entity_id": character["id"],
+            "relation_type": "hunts",
+        },
+    ).json()
+
+    report = client.get(f"/worlds/{wid}/consistency")
+    assert report.status_code == 200
+    issues = report.json()["issues"]
+    codes = {issue["code"] for issue in issues}
+    assert {"thin_lore", "timeline_gap", "missing_relationship_context", "possible_contradiction"}.issubset(codes)
+    assert any(issue["entity_id"] == event["id"] and issue["code"] == "timeline_gap" for issue in issues)
+    assert any(
+        issue["relationship_id"] in {first_relationship["id"], second_relationship["id"]}
+        and issue["code"] == "missing_relationship_context"
+        for issue in issues
+    )
 
 
 def test_cors_preflight_allowed_origin(client: TestClient) -> None:

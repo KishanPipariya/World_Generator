@@ -89,6 +89,10 @@ export const createDemoWorld = async (): Promise<DemoWorld> => {
   return response.data;
 };
 
+export const deleteWorld = async (worldId: string): Promise<void> => {
+  await api.delete(`/worlds/${worldId}`);
+};
+
 export const fetchEntities = async (worldId: string): Promise<Entity[]> => {
   const response = await api.get(`/worlds/${worldId}/entities`);
   return response.data.entities;

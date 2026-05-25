@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Globe2, Clock, Sparkles } from 'lucide-react';
-import { createDemoWorld, fetchWorlds, type World } from '../lib/api';
+import { Plus, Globe2, Clock, Sparkles, Trash2 } from 'lucide-react';
+import { createDemoWorld, deleteWorld, fetchWorlds, type World } from '../lib/api';
 import './Worlds.css';
 
 const WorldsList = () => {
@@ -28,6 +28,17 @@ const WorldsList = () => {
       setErrorMessage('Unable to create the demo world.');
     } finally {
       setCreatingDemo(false);
+    }
+  };
+
+  const handleDeleteWorld = async (world: World) => {
+    if (!window.confirm(`Delete "${world.title}" and all of its entities and relationships?`)) return;
+    setErrorMessage('');
+    try {
+      await deleteWorld(world.id);
+      setWorlds((current) => current.filter((item) => item.id !== world.id));
+    } catch {
+      setErrorMessage('Unable to delete this world.');
     }
   };
 
@@ -72,21 +83,32 @@ const WorldsList = () => {
       ) : (
         <div className="worlds-grid">
           {worlds.map(world => (
-            <Link to={`/worlds/${world.id}`} key={world.id} className="world-card glass">
+            <article key={world.id} className="world-card glass">
               <div className="world-card-header">
-                <h3>{world.title}</h3>
+                <Link to={`/worlds/${world.id}`} className="world-card-title">
+                  <h3>{world.title}</h3>
+                </Link>
+                <button
+                  className="icon-button danger"
+                  type="button"
+                  onClick={() => handleDeleteWorld(world)}
+                  title={`Delete ${world.title}`}
+                  aria-label={`Delete ${world.title}`}
+                >
+                  <Trash2 size={16} />
+                </button>
               </div>
-              <div className="world-card-body">
+              <Link to={`/worlds/${world.id}`} className="world-card-body">
                 {world.tone && (
                   <span className="badge badge-primary">{world.tone}</span>
                 )}
                 <p className="world-era">{world.era_notes || 'No era notes'}</p>
-              </div>
-              <div className="world-card-footer">
+              </Link>
+              <Link to={`/worlds/${world.id}`} className="world-card-footer">
                 <Clock size={16} />
                 <span>{new Date(world.created_at).toLocaleDateString()}</span>
-              </div>
-            </Link>
+              </Link>
+            </article>
           ))}
         </div>
       )}

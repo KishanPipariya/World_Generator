@@ -176,6 +176,29 @@ class WorldService:
         rec = self._get_record(world_id)
         return self._to_read(rec) if rec else None
 
+    def delete_world(self, world_id: UUID) -> bool:
+        if not self._get_record(world_id):
+            return False
+        delete_entities_query = """
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        MATCH (w)<-[belongs]-(e)
+        WHERE type(belongs) = "BELONGS_TO" AND "Entity" IN labels(e)
+        DETACH DELETE e
+        """
+        delete_world_query = """
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        WITH w
+        DETACH DELETE w
+        RETURN 1 AS deleted
+        """
+        with self._driver.session() as session:
+            session.run(delete_entities_query, w_id=str(world_id))
+            result = session.run(delete_world_query, w_id=str(world_id))
+            record = result.single()
+            return bool(record and record["deleted"])
+
     def generate_stub(
         self,
         world_id: UUID,
@@ -419,11 +442,22 @@ class WorldService:
         entities = self.list_entities(world_id) or []
         relationships = self.list_relationships(world_id) or []
 
-        lines = [f"# {rec.title}", "", "> Demo-ready world bible export.", ""]
+        lines = [
+            f"# {rec.title}",
+            "",
+            "> Demo-ready world bible export.",
+            "",
+            "## World Metadata",
+            "",
+            f"- Created: {rec.created_at.date().isoformat()}",
+            f"- Entities: {len(entities)}",
+            f"- Relationships: {len(relationships)}",
+        ]
         if rec.tone:
-            lines.extend([f"**Tone:** {rec.tone}", ""])
+            lines.append(f"- Tone: {rec.tone}")
         if rec.seed:
-            lines.extend([f"**Seed:** {rec.seed}", ""])
+            lines.append(f"- Seed: {rec.seed}")
+        lines.append("")
         if rec.era_notes:
             lines.extend(["## Era Notes", "", rec.era_notes, ""])
 
@@ -483,6 +517,14 @@ class WorldService:
         entities = self.list_entities(world_id) or []
         relationships = self.list_relationships(world_id) or []
         issues: list[ConsistencyIssue] = []
+        relationship_counts: dict[UUID, int] = {}
+        for relationship in relationships:
+            relationship_counts[relationship.source_entity_id] = (
+                relationship_counts.get(relationship.source_entity_id, 0) + 1
+            )
+            relationship_counts[relationship.target_entity_id] = (
+                relationship_counts.get(relationship.target_entity_id, 0) + 1
+            )
 
         if not entities:
             issues.append(
@@ -524,6 +566,55 @@ class WorldService:
                         entity_id=entity.id,
                     )
                 )
+            displayed_type = self._display_entity_type(entity.entity_type)
+            description = entity.description.strip().lower()
+            if displayed_type in {"Character", "Faction"} and not any(
+                cue in description
+                for cue in ("wants", "goal", "needs", "seeks", "fears", "secret", "conflict")
+            ):
+                issues.append(
+                    ConsistencyIssue(
+                        code="thin_lore",
+                        severity="info",
+                        message=f"{entity.name} may need clearer goals, secrets, or story pressure.",
+                        entity_id=entity.id,
+                    )
+                )
+            if displayed_type == "Location" and not any(
+                cue in description
+                for cue in ("culture", "trade", "economy", "conflict", "ruled", "hazard", "landmark")
+            ):
+                issues.append(
+                    ConsistencyIssue(
+                        code="thin_lore",
+                        severity="info",
+                        message=f"{entity.name} may need culture, economy, conflict, or landmark context.",
+                        entity_id=entity.id,
+                    )
+                )
+            if displayed_type == "Event" and not any(
+                cue in description
+                for cue in (
+                    "before",
+                    "after",
+                    "during",
+                    "year",
+                    "century",
+                    "age",
+                    "era",
+                    "season",
+                    "day",
+                    "night",
+                )
+            ):
+                issues.append(
+                    ConsistencyIssue(
+                        code="timeline_gap",
+                        severity="warning",
+                        message=f"{entity.name} is an event without clear chronology.",
+                        entity_id=entity.id,
+                    )
+                )
 
         for duplicates in name_to_entities.values():
             if len(duplicates) > 1:
@@ -537,15 +628,8 @@ class WorldService:
                         )
                     )
 
-        connected_ids = {
-            relationship.source_entity_id
-            for relationship in relationships
-        } | {
-            relationship.target_entity_id
-            for relationship in relationships
-        }
         for entity in entities:
-            if entity.id not in connected_ids:
+            if entity.id not in relationship_counts:
                 issues.append(
                     ConsistencyIssue(
                         code="orphaned_entity",
@@ -554,9 +638,23 @@ class WorldService:
                         entity_id=entity.id,
                     )
                 )
+            elif (
+                self._display_entity_type(entity.entity_type) in {"Character", "Faction", "Event"}
+                and relationship_counts[entity.id] == 1
+            ):
+                issues.append(
+                    ConsistencyIssue(
+                        code="missing_relationship_context",
+                        severity="info",
+                        message=f"{entity.name} has limited relationship context for canon review.",
+                        entity_id=entity.id,
+                    )
+                )
 
         pair_types: dict[tuple[UUID, UUID, str], RelationshipRead] = {}
+        pair_stances: dict[frozenset[UUID], set[str]] = {}
         for relationship in relationships:
+            relation_text = relationship.relation_type.strip().lower()
             if not relationship.relation_type.strip():
                 issues.append(
                     ConsistencyIssue(
@@ -566,7 +664,7 @@ class WorldService:
                         relationship_id=relationship.id,
                     )
                 )
-            elif len(relationship.relation_type.strip()) < 3:
+            elif len(relation_text) < 3:
                 issues.append(
                     ConsistencyIssue(
                         code="weak_relationship",
@@ -575,10 +673,22 @@ class WorldService:
                         relationship_id=relationship.id,
                     )
                 )
+            if not relationship.notes or len(relationship.notes.strip()) < 20:
+                issues.append(
+                    ConsistencyIssue(
+                        code="missing_relationship_context",
+                        severity="info",
+                        message=(
+                            f"Relationship between {relationship.source_entity_name} "
+                            f"and {relationship.target_entity_name} needs more context."
+                        ),
+                        relationship_id=relationship.id,
+                    )
+                )
             key = (
                 relationship.source_entity_id,
                 relationship.target_entity_id,
-                relationship.relation_type.strip().lower(),
+                relation_text,
             )
             if key in pair_types:
                 issues.append(
@@ -593,10 +703,27 @@ class WorldService:
                     )
                 )
             pair_types[key] = relationship
+            stance = self._relationship_stance(relation_text)
+            if stance:
+                pair_key = frozenset((relationship.source_entity_id, relationship.target_entity_id))
+                existing = pair_stances.setdefault(pair_key, set())
+                if existing and stance not in existing:
+                    issues.append(
+                        ConsistencyIssue(
+                            code="possible_contradiction",
+                            severity="warning",
+                            message=(
+                                f"{relationship.source_entity_name} and "
+                                f"{relationship.target_entity_name} have mixed alliance/conflict signals."
+                            ),
+                            relationship_id=relationship.id,
+                        )
+                    )
+                existing.add(stance)
 
         severity_cost = {"info": 2, "warning": 8, "error": 18}
         score = max(0, 100 - sum(severity_cost[issue.severity] for issue in issues))
-        summary = "No consistency issues found." if not issues else f"{len(issues)} issue(s) found."
+        summary = self._consistency_summary(score, issues)
         return ConsistencyReportResponse(
             world_id=world_id,
             score=score,
@@ -728,3 +855,34 @@ class WorldService:
         if normalized in {"event", "historical event", "battle"}:
             return "Event"
         return "Other"
+
+    @staticmethod
+    def _relationship_stance(relation_type: str) -> str | None:
+        ally_cues = {"ally", "allied", "protect", "supports", "serves", "trusts", "loves"}
+        conflict_cues = {"enemy", "rival", "hunts", "opposes", "betrays", "hates", "fights"}
+        if any(cue in relation_type for cue in ally_cues):
+            return "alliance"
+        if any(cue in relation_type for cue in conflict_cues):
+            return "conflict"
+        return None
+
+    @staticmethod
+    def _consistency_summary(score: int, issues: list[ConsistencyIssue]) -> str:
+        if not issues:
+            return "Canon looks ready: no heuristic consistency issues were found."
+        error_count = sum(1 for issue in issues if issue.severity == "error")
+        warning_count = sum(1 for issue in issues if issue.severity == "warning")
+        info_count = sum(1 for issue in issues if issue.severity == "info")
+        parts = []
+        if error_count:
+            parts.append(f"{error_count} blocking issue(s)")
+        if warning_count:
+            parts.append(f"{warning_count} warning(s)")
+        if info_count:
+            parts.append(f"{info_count} improvement note(s)")
+        focus = "Fix errors first, then connect isolated lore and add context where flagged."
+        if score >= 85:
+            focus = "Strong demo shape; the remaining notes are polish."
+        elif score >= 65:
+            focus = "Demoable, but relationship context and chronology need attention."
+        return f"Score {score}: {', '.join(parts)}. {focus}"
