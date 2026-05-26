@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, Protocol
@@ -13,7 +14,14 @@ from app.schemas.world import (
     DemoWorldResponse,
     EntityRead,
     EntityUpdate,
+    ExportPreset,
+    GenerationSuggestionRead,
+    PassageCheckIssue,
+    PassageCheckResponse,
     RelationshipRead,
+    RevisionVersionRead,
+    TimelineEventCreate,
+    TimelineEventRead,
     WorldCreate,
     WorldRead,
 )
@@ -239,20 +247,26 @@ class WorldService:
         )
 
     def create_entity(
-        self, world_id: UUID, name: str, entity_type: str, description: str
+        self,
+        world_id: UUID,
+        name: str,
+        entity_type: str,
+        description: str,
+        structured_fields: dict[str, str] | None = None,
     ) -> EntityRead:
         eid = uuid4()
         now = datetime.now(UTC)
+        structured_json = json.dumps(structured_fields or {}, sort_keys=True)
         query = """
         MATCH (w:World {id: $w_id})
         CREATE (w)<-[:BELONGS_TO]-(e:Entity {
             id: $e_id, world_id: $w_id, name: $name, 
             entity_type: $entity_type, description: $description,
-            created_at: $created_at
+            structured_fields_json: $structured_fields_json, created_at: $created_at
         })
         RETURN e.id AS id, e.world_id AS world_id, e.name AS name,
-               e.entity_type AS entity_type, e.description AS description, 
-               e.created_at AS created_at
+               e.entity_type AS entity_type, e.description AS description,
+               e.structured_fields_json AS structured_fields_json, e.created_at AS created_at
         """
         with self._driver.session() as session:
             result = session.run(query, 
@@ -261,6 +275,7 @@ class WorldService:
                                  name=name,
                                  entity_type=entity_type,
                                  description=description,
+                                 structured_fields_json=structured_json,
                                  created_at=now.isoformat())
             record = result.single()
             if not record:
@@ -271,6 +286,7 @@ class WorldService:
                 name=record["name"],
                 entity_type=record["entity_type"],
                 description=record["description"],
+                structured_fields=self._decode_structured_fields(record.get("structured_fields_json")),
                 created_at=datetime.fromisoformat(record["created_at"])
             )
 
@@ -305,10 +321,12 @@ class WorldService:
           AND properties(e).id = $e_id
         SET e.name = coalesce($name, e.name),
             e.entity_type = coalesce($entity_type, e.entity_type),
-            e.description = coalesce($description, e.description)
-        RETURN properties(e) AS props
+            e.description = coalesce($description, e.description),
+            e.structured_fields_json = coalesce($structured_fields_json, e.structured_fields_json)
+        RETURN properties(e) AS props, $source AS source
         """
         with self._driver.session() as session:
+            current = self.get_entity(world_id, entity_id)
             result = session.run(
                 query,
                 w_id=str(world_id),
@@ -316,9 +334,26 @@ class WorldService:
                 name=updates.get("name"),
                 entity_type=updates.get("entity_type"),
                 description=updates.get("description"),
+                structured_fields_json=(
+                    json.dumps(updates["structured_fields"], sort_keys=True)
+                    if "structured_fields" in updates
+                    else None
+                ),
+                source="manual",
             )
             record = result.single()
-            return self._entity_from_record(record) if record else None
+            updated = self._entity_from_record(record) if record else None
+            if current and updated and updates.get("description") is not None:
+                self._record_revision(
+                    world_id=world_id,
+                    entity_id=entity_id,
+                    subject_type="entity",
+                    field_name="description",
+                    previous_value=current.description,
+                    new_value=updated.description,
+                    source="manual",
+                )
+            return updated
 
     def get_entity(self, world_id: UUID, entity_id: UUID) -> EntityRead | None:
         query = """
@@ -361,6 +396,9 @@ class WorldService:
         target_entity_id: UUID,
         relation_type: str,
         notes: str | None,
+        category: str | None = None,
+        strength: int | None = None,
+        history: str | None = None,
     ) -> RelationshipRead:
         rid = uuid4()
         now = datetime.now(UTC)
@@ -377,7 +415,8 @@ class WorldService:
           AND properties(target).id = $target_id
         CREATE (source)-[r:RELATED_TO {
             id: $r_id, world_id: $w_id, relation_type: $relation_type,
-            notes: $notes, created_at: $created_at
+            notes: $notes, category: $category, strength: $strength,
+            history: $history, created_at: $created_at
         }]->(target)
         WITH properties(r) AS rel_props,
              properties(source) AS source_props,
@@ -393,6 +432,9 @@ class WorldService:
                 r_id=str(rid),
                 relation_type=relation_type,
                 notes=notes,
+                category=category,
+                strength=strength,
+                history=history,
                 created_at=now.isoformat(),
             )
             record = result.single()
@@ -435,17 +477,35 @@ class WorldService:
             record = result.single()
             return bool(record and record["deleted"])
 
-    def export_markdown(self, world_id: UUID) -> str | None:
+    def export_markdown(self, world_id: UUID, preset: ExportPreset = "full_bible") -> str | None:
         rec = self._get_record(world_id)
         if not rec:
             return None
         entities = self.list_entities(world_id) or []
         relationships = self.list_relationships(world_id) or []
+        timeline = self.list_timeline_events(world_id) or []
+
+        entity_types_by_preset = {
+            "character_dossier": {"Character"},
+            "faction_brief": {"Faction"},
+            "location_gazetteer": {"Location"},
+        }
+        if preset in entity_types_by_preset:
+            allowed = entity_types_by_preset[preset]
+            entities = [
+                entity for entity in entities if self._display_entity_type(entity.entity_type) in allowed
+            ]
+            allowed_ids = {entity.id for entity in entities}
+            relationships = [
+                relationship
+                for relationship in relationships
+                if relationship.source_entity_id in allowed_ids or relationship.target_entity_id in allowed_ids
+            ]
 
         lines = [
             f"# {rec.title}",
             "",
-            "> Demo-ready world bible export.",
+            f"> {self._export_label(preset)}.",
             "",
             "## World Metadata",
             "",
@@ -460,6 +520,9 @@ class WorldService:
         lines.append("")
         if rec.era_notes:
             lines.extend(["## Era Notes", "", rec.era_notes, ""])
+
+        if preset == "timeline_only":
+            return self._timeline_markdown(rec.title, timeline)
 
         lines.extend(["## Entities", ""])
         if not entities:
@@ -482,6 +545,12 @@ class WorldService:
                         or relationship.target_entity_id == entity.id
                     ]
                     lines.extend([f"#### {entity.name}", "", entity.description, ""])
+                    if entity.structured_fields:
+                        lines.extend(["Structured fields:", ""])
+                        for key, value in entity.structured_fields.items():
+                            if value:
+                                lines.append(f"- {key.replace('_', ' ').title()}: {value}")
+                        lines.append("")
                     if related:
                         lines.extend(["Related:", ""])
                         for relationship in related:
@@ -506,6 +575,27 @@ class WorldService:
                 )
                 if relationship.notes:
                     lines.append(f"  - {relationship.notes}")
+                details = []
+                if relationship.category:
+                    details.append(f"category: {relationship.category}")
+                if relationship.strength:
+                    details.append(f"strength: {relationship.strength}/5")
+                if details:
+                    lines.append(f"  - {'; '.join(details)}")
+                if relationship.history:
+                    lines.append(f"  - History: {relationship.history}")
+            lines.append("")
+
+        if timeline:
+            lines.extend(["## Timeline", ""])
+            for event in timeline:
+                lines.append(f"- {event.event_order}. {event.title}")
+                if event.description:
+                    lines.append(f"  - {event.description}")
+                if event.causes:
+                    lines.append(f"  - Cause: {event.causes}")
+                if event.consequences:
+                    lines.append(f"  - Consequence: {event.consequences}")
             lines.append("")
 
         return "\n".join(lines).strip() + "\n"
@@ -788,6 +878,326 @@ class WorldService:
 
         return result_text, entity_id
 
+    def create_generation_suggestion(
+        self,
+        world_id: UUID,
+        instruction: str,
+        content: str,
+        suggested_name: str | None = None,
+        suggested_type: str | None = None,
+    ) -> GenerationSuggestionRead:
+        if not self._get_record(world_id):
+            raise ValueError("World not found")
+        sid = uuid4()
+        now = datetime.now(UTC)
+        query = """
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        CREATE (w)<-[:BELONGS_TO]-(s:CanonSuggestion {
+            id: $s_id, world_id: $w_id, instruction: $instruction,
+            content: $content, suggested_name: $suggested_name,
+            suggested_type: $suggested_type, status: "pending",
+            created_at: $created_at
+        })
+        RETURN properties(s) AS props
+        """
+        with self._driver.session() as session:
+            result = session.run(
+                query,
+                w_id=str(world_id),
+                s_id=str(sid),
+                instruction=instruction,
+                content=content,
+                suggested_name=suggested_name,
+                suggested_type=suggested_type,
+                created_at=now.isoformat(),
+            )
+            record = result.single()
+            if not record:
+                raise ValueError("World not found")
+            return self._suggestion_from_record(record)
+
+    def list_generation_suggestions(self, world_id: UUID) -> list[GenerationSuggestionRead] | None:
+        if not self._get_record(world_id):
+            return None
+        query = """
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        MATCH (w)<-[belongs]-(s)
+        WHERE type(belongs) = "BELONGS_TO" AND "CanonSuggestion" IN labels(s)
+        RETURN properties(s) AS props
+        ORDER BY props.created_at DESC
+        """
+        with self._driver.session() as session:
+            result = session.run(query, w_id=str(world_id))
+            return [self._suggestion_from_record(record) for record in result]
+
+    def apply_generation_suggestion(
+        self,
+        world_id: UUID,
+        suggestion_id: UUID,
+        mode: str,
+        entity_id: UUID | None = None,
+        name: str | None = None,
+        entity_type: str | None = None,
+        description: str | None = None,
+    ) -> tuple[GenerationSuggestionRead, EntityRead | None] | None:
+        suggestion = self._get_suggestion(world_id, suggestion_id)
+        if not suggestion:
+            return None
+        entity: EntityRead | None = None
+        content = description if description is not None else suggestion.content
+        if mode == "discard":
+            status_value = "discarded"
+        elif mode == "create_entity":
+            entity = self.create_entity(
+                world_id,
+                name or suggestion.suggested_name or "Generated Lore",
+                entity_type or suggestion.suggested_type or "Concept",
+                content,
+            )
+            self._record_revision(
+                world_id, entity.id, "entity", "description", None, entity.description, "generated"
+            )
+            status_value = "accepted"
+        elif mode in {"append_to_entity", "replace_entity"} and entity_id:
+            current = self.get_entity(world_id, entity_id)
+            if not current:
+                return None
+            next_description = (
+                f"{current.description.strip()}\n\n{content}".strip()
+                if mode == "append_to_entity"
+                else content
+            )
+            entity = self.update_entity(
+                world_id, entity_id, EntityUpdate(description=next_description)
+            )
+            status_value = "accepted"
+        else:
+            raise ValueError("Invalid suggestion apply request")
+        updated = self._set_suggestion_status(world_id, suggestion_id, status_value)
+        return updated, entity
+
+    def create_timeline_event(
+        self, world_id: UUID, data: TimelineEventCreate
+    ) -> TimelineEventRead:
+        if not self._get_record(world_id):
+            raise ValueError("World not found")
+        event_id = uuid4()
+        now = datetime.now(UTC)
+        query = """
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        CREATE (w)<-[:BELONGS_TO]-(t:TimelineEvent {
+            id: $event_id, world_id: $w_id, title: $title,
+            event_order: $event_order, description: $description,
+            participants_json: $participants_json, causes: $causes,
+            consequences: $consequences, created_at: $created_at
+        })
+        RETURN properties(t) AS props
+        """
+        with self._driver.session() as session:
+            result = session.run(
+                query,
+                w_id=str(world_id),
+                event_id=str(event_id),
+                title=data.title,
+                event_order=data.event_order,
+                description=data.description,
+                participants_json=json.dumps([str(item) for item in data.participants]),
+                causes=data.causes,
+                consequences=data.consequences,
+                created_at=now.isoformat(),
+            )
+            record = result.single()
+            if not record:
+                raise ValueError("World not found")
+            return self._timeline_event_from_record(record)
+
+    def list_timeline_events(self, world_id: UUID) -> list[TimelineEventRead] | None:
+        if not self._get_record(world_id):
+            return None
+        query = """
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        MATCH (w)<-[belongs]-(t)
+        WHERE type(belongs) = "BELONGS_TO" AND "TimelineEvent" IN labels(t)
+        RETURN properties(t) AS props
+        ORDER BY props.event_order ASC, props.created_at ASC
+        """
+        with self._driver.session() as session:
+            result = session.run(query, w_id=str(world_id))
+            return [self._timeline_event_from_record(record) for record in result]
+
+    def list_revisions(
+        self, world_id: UUID, entity_id: UUID | None = None
+    ) -> list[RevisionVersionRead] | None:
+        if not self._get_record(world_id):
+            return None
+        query = """
+        MATCH (r)
+        WHERE "RevisionVersion" IN labels(r)
+          AND properties(r).world_id = $w_id
+          AND ($entity_id IS NULL OR properties(r).entity_id = $entity_id)
+        RETURN properties(r) AS props
+        ORDER BY props.created_at DESC
+        """
+        with self._driver.session() as session:
+            result = session.run(
+                query, w_id=str(world_id), entity_id=str(entity_id) if entity_id else None
+            )
+            return [self._revision_from_record(record) for record in result]
+
+    def restore_revision(
+        self, world_id: UUID, revision_id: UUID
+    ) -> EntityRead | None:
+        revisions = self.list_revisions(world_id) or []
+        revision = next((item for item in revisions if item.id == revision_id), None)
+        if not revision or revision.subject_type != "entity" or not revision.entity_id:
+            return None
+        entity = self.update_entity(
+            world_id, revision.entity_id, EntityUpdate(description=revision.previous_value or "")
+        )
+        if entity:
+            self._record_revision(
+                world_id,
+                entity.id,
+                "entity",
+                "description",
+                revision.new_value,
+                revision.previous_value,
+                "restore",
+            )
+        return entity
+
+    def passage_check(self, world_id: UUID, passage: str) -> PassageCheckResponse | None:
+        rec = self._get_record(world_id)
+        if not rec:
+            return None
+        entities = self.list_entities(world_id) or []
+        issues: list[PassageCheckIssue] = []
+        lower_passage = passage.lower()
+        mentioned = [
+            entity
+            for entity in entities
+            if entity.name.lower() in lower_passage
+            or any(word and word in lower_passage for word in entity.name.lower().split())
+        ]
+        if not mentioned:
+            issues.append(
+                PassageCheckIssue(
+                    code="missing_setup",
+                    severity="warning",
+                    message="The passage does not mention saved canon entities by name.",
+                )
+            )
+        if rec.tone and rec.tone.lower() not in lower_passage:
+            issues.append(
+                PassageCheckIssue(
+                    code="tone_drift",
+                    severity="info",
+                    message="The passage may need a tone pass against the world's stated tone.",
+                )
+            )
+        contradiction_cues = ("never", "always", "impossible", "only", "last")
+        for entity in mentioned:
+            entity_text = entity.description.lower()
+            if any(cue in lower_passage and cue in entity_text for cue in contradiction_cues):
+                issues.append(
+                    PassageCheckIssue(
+                        code="canon_absolute",
+                        severity="warning",
+                        message=f"{entity.name} uses absolute wording in both passage and canon; verify continuity.",
+                        entity_id=entity.id,
+                    )
+                )
+            if entity.entity_type.lower() in {"event", "historical event"} and not any(
+                cue in lower_passage for cue in ("before", "after", "during", "year", "season", "night")
+            ):
+                issues.append(
+                    PassageCheckIssue(
+                        code="timeline_context",
+                        severity="info",
+                        message=f"{entity.name} is referenced without clear chronology.",
+                        entity_id=entity.id,
+                    )
+                )
+        summary = "Passage check found no heuristic warnings."
+        if issues:
+            summary = f"Passage check found {len(issues)} item(s) to review."
+        return PassageCheckResponse(world_id=world_id, summary=summary, issues=issues)
+
+    def _get_suggestion(
+        self, world_id: UUID, suggestion_id: UUID
+    ) -> GenerationSuggestionRead | None:
+        query = """
+        MATCH (s)
+        WHERE "CanonSuggestion" IN labels(s)
+          AND properties(s).world_id = $w_id
+          AND properties(s).id = $s_id
+        RETURN properties(s) AS props
+        """
+        with self._driver.session() as session:
+            result = session.run(query, w_id=str(world_id), s_id=str(suggestion_id))
+            record = result.single()
+            return self._suggestion_from_record(record) if record else None
+
+    def _set_suggestion_status(
+        self, world_id: UUID, suggestion_id: UUID, status_value: str
+    ) -> GenerationSuggestionRead:
+        query = """
+        MATCH (s)
+        WHERE "CanonSuggestion" IN labels(s)
+          AND properties(s).world_id = $w_id
+          AND properties(s).id = $s_id
+        SET s.status = $status
+        RETURN properties(s) AS props
+        """
+        with self._driver.session() as session:
+            result = session.run(
+                query, w_id=str(world_id), s_id=str(suggestion_id), status=status_value
+            )
+            record = result.single()
+            if not record:
+                raise ValueError("Suggestion not found")
+            return self._suggestion_from_record(record)
+
+    def _record_revision(
+        self,
+        world_id: UUID,
+        entity_id: UUID | None,
+        subject_type: str,
+        field_name: str,
+        previous_value: str | None,
+        new_value: str | None,
+        source: str,
+    ) -> RevisionVersionRead:
+        revision_id = uuid4()
+        now = datetime.now(UTC)
+        query = """
+        CREATE (r:RevisionVersion {
+            id: $revision_id, world_id: $w_id, entity_id: $entity_id,
+            subject_type: $subject_type, field_name: $field_name,
+            previous_value: $previous_value, new_value: $new_value,
+            source: $source, created_at: $created_at
+        })
+        RETURN properties(r) AS props
+        """
+        with self._driver.session() as session:
+            result = session.run(
+                query,
+                revision_id=str(revision_id),
+                w_id=str(world_id),
+                entity_id=str(entity_id) if entity_id else None,
+                subject_type=subject_type,
+                field_name=field_name,
+                previous_value=previous_value,
+                new_value=new_value,
+                source=source,
+                created_at=now.isoformat(),
+            )
+            return self._revision_from_record(result.single())
+
     @staticmethod
     def _entity_from_record(record) -> EntityRead:  # noqa: ANN001
         props = record.get("props", record)
@@ -797,6 +1207,9 @@ class WorldService:
             name=props["name"],
             entity_type=props["entity_type"],
             description=props["description"],
+            structured_fields=WorldService._decode_structured_fields(
+                props.get("structured_fields_json")
+            ),
             created_at=datetime.fromisoformat(props["created_at"]),
         )
 
@@ -816,6 +1229,9 @@ class WorldService:
                 target_entity_name=target_props["name"],
                 relation_type=rel_props["relation_type"],
                 notes=rel_props.get("notes"),
+                category=rel_props.get("category"),
+                strength=rel_props.get("strength"),
+                history=rel_props.get("history"),
                 created_at=datetime.fromisoformat(rel_props["created_at"]),
             )
         return RelationshipRead(
@@ -827,7 +1243,57 @@ class WorldService:
             target_entity_name=record["target_entity_name"],
             relation_type=record["relation_type"],
             notes=record.get("notes"),
+            category=record.get("category"),
+            strength=record.get("strength"),
+            history=record.get("history"),
             created_at=datetime.fromisoformat(record["created_at"]),
+        )
+
+    @staticmethod
+    def _suggestion_from_record(record) -> GenerationSuggestionRead:  # noqa: ANN001
+        props = record.get("props", record)
+        return GenerationSuggestionRead(
+            id=UUID(props["id"]),
+            world_id=UUID(props["world_id"]),
+            instruction=props["instruction"],
+            content=props["content"],
+            suggested_name=props.get("suggested_name"),
+            suggested_type=props.get("suggested_type"),
+            status=props.get("status", "pending"),
+            created_at=datetime.fromisoformat(props["created_at"]),
+        )
+
+    @staticmethod
+    def _timeline_event_from_record(record) -> TimelineEventRead:  # noqa: ANN001
+        props = record.get("props", record)
+        return TimelineEventRead(
+            id=UUID(props["id"]),
+            world_id=UUID(props["world_id"]),
+            title=props["title"],
+            event_order=int(props["event_order"]),
+            description=props.get("description") or "",
+            participants=[
+                UUID(item)
+                for item in json.loads(props.get("participants_json") or "[]")
+            ],
+            causes=props.get("causes"),
+            consequences=props.get("consequences"),
+            created_at=datetime.fromisoformat(props["created_at"]),
+        )
+
+    @staticmethod
+    def _revision_from_record(record) -> RevisionVersionRead:  # noqa: ANN001
+        props = record.get("props", record)
+        return RevisionVersionRead(
+            id=UUID(props["id"]),
+            world_id=UUID(props["world_id"]),
+            entity_id=UUID(props["entity_id"]) if props.get("entity_id") else None,
+            subject_type=props["subject_type"],
+            field_name=props["field_name"],
+            previous_value=props.get("previous_value"),
+            new_value=props.get("new_value"),
+            source=props.get("source", "manual"),
+            created_at=datetime.fromisoformat(props["created_at"]),
         )
 
     @staticmethod
@@ -855,6 +1321,48 @@ class WorldService:
         if normalized in {"event", "historical event", "battle"}:
             return "Event"
         return "Other"
+
+    @staticmethod
+    def _decode_structured_fields(raw: object) -> dict[str, str]:
+        if not raw:
+            return {}
+        if isinstance(raw, dict):
+            return {str(key): str(value) for key, value in raw.items()}
+        try:
+            parsed = json.loads(str(raw))
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(parsed, dict):
+            return {}
+        return {str(key): str(value) for key, value in parsed.items()}
+
+    @staticmethod
+    def _export_label(preset: str) -> str:
+        labels = {
+            "full_bible": "Full world bible export",
+            "character_dossier": "Character dossier export",
+            "faction_brief": "Faction brief export",
+            "location_gazetteer": "Location gazetteer export",
+            "timeline_only": "Timeline export",
+            "obsidian": "Obsidian-friendly world bible export",
+        }
+        return labels.get(preset, "World bible export")
+
+    @staticmethod
+    def _timeline_markdown(title: str, timeline: list[TimelineEventRead]) -> str:
+        lines = [f"# {title} Timeline", ""]
+        if not timeline:
+            lines.extend(["No timeline events yet.", ""])
+        for event in timeline:
+            lines.extend([f"## {event.event_order}. {event.title}", ""])
+            if event.description:
+                lines.extend([event.description, ""])
+            if event.causes:
+                lines.extend([f"- Cause: {event.causes}"])
+            if event.consequences:
+                lines.extend([f"- Consequence: {event.consequences}"])
+            lines.append("")
+        return "\n".join(lines).strip() + "\n"
 
     @staticmethod
     def _relationship_stance(relation_type: str) -> str | None:

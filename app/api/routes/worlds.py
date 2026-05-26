@@ -12,12 +12,23 @@ from app.schemas.world import (
     EntityListResponse,
     EntityRead,
     EntityUpdate,
+    ExportPreset,
     GenerateRequest,
     GenerateResponse,
+    GenerationSuggestionCreate,
+    GenerationSuggestionListResponse,
+    PassageCheckRequest,
+    PassageCheckResponse,
     MarkdownExportResponse,
     RelationshipCreate,
     RelationshipListResponse,
     RelationshipRead,
+    RevisionVersionListResponse,
+    SuggestionApplyRequest,
+    SuggestionApplyResponse,
+    TimelineEventCreate,
+    TimelineEventListResponse,
+    TimelineEventRead,
     WorldCreate,
     WorldRead,
 )
@@ -92,11 +103,22 @@ def agentic_generate(
             save_as_type=body.save_as_entity_type,
             save_as_name=body.save_as_name,
         )
+        suggestion_id = None
+        if entity_id is None:
+            suggestion = svc.create_generation_suggestion(
+                world_id=world_id,
+                instruction=body.instruction,
+                content=content,
+                suggested_name=body.save_as_name,
+                suggested_type=body.save_as_entity_type,
+            )
+            suggestion_id = suggestion.id
         return AgenticGenerateResponse(
             world_id=world_id,
             instruction=body.instruction,
             content=content,
             entity_id=entity_id,
+            suggestion_id=suggestion_id,
         )
     except ValueError as e:
         if str(e) == "World not found":
@@ -131,6 +153,7 @@ def create_entity(
             name=body.name,
             entity_type=body.entity_type,
             description=body.description,
+            structured_fields=body.structured_fields,
         )
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
@@ -201,6 +224,9 @@ def create_relationship(
             target_entity_id=body.target_entity_id,
             relation_type=body.relation_type,
             notes=body.notes,
+            category=body.category,
+            strength=body.strength,
+            history=body.history,
         )
     except ValueError:
         raise HTTPException(
@@ -225,14 +251,139 @@ def delete_relationship(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Relationship not found")
 
 
+@router.get("/{world_id}/suggestions", response_model=GenerationSuggestionListResponse)
+def list_suggestions(
+    world_id: UUID,
+    svc: WorldService = Depends(get_world_service),
+) -> GenerationSuggestionListResponse:
+    suggestions = svc.list_generation_suggestions(world_id)
+    if suggestions is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
+    return GenerationSuggestionListResponse(suggestions=suggestions)
+
+
+@router.post(
+    "/{world_id}/suggestions",
+    response_model=AgenticGenerateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_suggestion(
+    world_id: UUID,
+    body: GenerationSuggestionCreate,
+    svc: WorldService = Depends(get_world_service),
+) -> AgenticGenerateResponse:
+    try:
+        suggestion = svc.create_generation_suggestion(
+            world_id=world_id,
+            instruction=body.instruction,
+            content=body.content,
+            suggested_name=body.suggested_name,
+            suggested_type=body.suggested_type,
+        )
+        return AgenticGenerateResponse(
+            world_id=world_id,
+            instruction=body.instruction,
+            content=body.content,
+            suggestion_id=suggestion.id,
+        )
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
+
+
+@router.post("/{world_id}/suggestions/{suggestion_id}/apply", response_model=SuggestionApplyResponse)
+def apply_suggestion(
+    world_id: UUID,
+    suggestion_id: UUID,
+    body: SuggestionApplyRequest,
+    svc: WorldService = Depends(get_world_service),
+) -> SuggestionApplyResponse:
+    try:
+        result = svc.apply_generation_suggestion(
+            world_id=world_id,
+            suggestion_id=suggestion_id,
+            mode=body.mode,
+            entity_id=body.entity_id,
+            name=body.name,
+            entity_type=body.entity_type,
+            description=body.description,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if not result:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suggestion or entity not found")
+    suggestion, entity = result
+    return SuggestionApplyResponse(suggestion=suggestion, entity=entity)
+
+
+@router.get("/{world_id}/timeline", response_model=TimelineEventListResponse)
+def list_timeline_events(
+    world_id: UUID,
+    svc: WorldService = Depends(get_world_service),
+) -> TimelineEventListResponse:
+    events = svc.list_timeline_events(world_id)
+    if events is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
+    return TimelineEventListResponse(events=events)
+
+
+@router.post("/{world_id}/timeline", response_model=TimelineEventRead, status_code=status.HTTP_201_CREATED)
+def create_timeline_event(
+    world_id: UUID,
+    body: TimelineEventCreate,
+    svc: WorldService = Depends(get_world_service),
+) -> TimelineEventRead:
+    try:
+        return svc.create_timeline_event(world_id, body)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
+
+
+@router.get("/{world_id}/revisions", response_model=RevisionVersionListResponse)
+def list_revisions(
+    world_id: UUID,
+    entity_id: UUID | None = None,
+    svc: WorldService = Depends(get_world_service),
+) -> RevisionVersionListResponse:
+    versions = svc.list_revisions(world_id, entity_id)
+    if versions is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
+    return RevisionVersionListResponse(versions=versions)
+
+
+@router.post("/{world_id}/revisions/{revision_id}/restore", response_model=EntityRead)
+def restore_revision(
+    world_id: UUID,
+    revision_id: UUID,
+    svc: WorldService = Depends(get_world_service),
+) -> EntityRead:
+    entity = svc.restore_revision(world_id, revision_id)
+    if not entity:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Revision not found")
+    return entity
+
+
+@router.post("/{world_id}/passage-check", response_model=PassageCheckResponse)
+def passage_check(
+    world_id: UUID,
+    body: PassageCheckRequest,
+    svc: WorldService = Depends(get_world_service),
+) -> PassageCheckResponse:
+    result = svc.passage_check(world_id, body.passage)
+    if not result:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
+    return result
+
+
 @router.get("/{world_id}/export/markdown", response_model=MarkdownExportResponse)
 def export_markdown(
     world_id: UUID,
+    preset: ExportPreset = "full_bible",
     svc: WorldService = Depends(get_world_service),
 ) -> MarkdownExportResponse:
     world = svc.get(world_id)
-    content = svc.export_markdown(world_id)
+    content = svc.export_markdown(world_id, preset)
     if not world or content is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
-    filename = f"{world.title.strip().lower().replace(' ', '-') or 'world'}-bible.md"
-    return MarkdownExportResponse(world_id=world_id, filename=filename, content=content)
+    slug = world.title.strip().lower().replace(" ", "-") or "world"
+    filename = f"{slug}-{preset.replace('_', '-')}.md"
+    return MarkdownExportResponse(world_id=world_id, filename=filename, content=content, preset=preset)

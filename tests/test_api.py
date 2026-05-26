@@ -40,10 +40,56 @@ class _FakeSession:
                 "name": kwargs["name"],
                 "entity_type": kwargs["entity_type"],
                 "description": kwargs["description"],
+                "structured_fields_json": kwargs.get("structured_fields_json", "{}"),
                 "created_at": kwargs["created_at"],
             }
             self.db["entities"][kwargs["e_id"]] = record
             return _FakeResult([record])
+        if "CREATE (w)<-[:BELONGS_TO]-(s:CanonSuggestion" in query:
+            if kwargs["w_id"] not in self.db["worlds"]:
+                return _FakeResult([])
+            record = {
+                "id": kwargs["s_id"],
+                "world_id": kwargs["w_id"],
+                "instruction": kwargs["instruction"],
+                "content": kwargs["content"],
+                "suggested_name": kwargs["suggested_name"],
+                "suggested_type": kwargs["suggested_type"],
+                "status": "pending",
+                "created_at": kwargs["created_at"],
+            }
+            self.db["suggestions"][kwargs["s_id"]] = record
+            return _FakeResult([{"props": record}])
+        if "CREATE (w)<-[:BELONGS_TO]-(t:TimelineEvent" in query:
+            if kwargs["w_id"] not in self.db["worlds"]:
+                return _FakeResult([])
+            record = {
+                "id": kwargs["event_id"],
+                "world_id": kwargs["w_id"],
+                "title": kwargs["title"],
+                "event_order": kwargs["event_order"],
+                "description": kwargs["description"],
+                "participants_json": kwargs["participants_json"],
+                "causes": kwargs["causes"],
+                "consequences": kwargs["consequences"],
+                "created_at": kwargs["created_at"],
+            }
+            self.db["timeline"][kwargs["event_id"]] = record
+            return _FakeResult([{"props": record}])
+        if "CREATE (r:RevisionVersion" in query:
+            record = {
+                "id": kwargs["revision_id"],
+                "world_id": kwargs["w_id"],
+                "entity_id": kwargs["entity_id"],
+                "subject_type": kwargs["subject_type"],
+                "field_name": kwargs["field_name"],
+                "previous_value": kwargs["previous_value"],
+                "new_value": kwargs["new_value"],
+                "source": kwargs["source"],
+                "created_at": kwargs["created_at"],
+            }
+            self.db["revisions"][kwargs["revision_id"]] = record
+            return _FakeResult([{"props": record}])
         if "CREATE (source)-[r:RELATED_TO" in query:
             source = self.db["entities"].get(kwargs["source_id"])
             target = self.db["entities"].get(kwargs["target_id"])
@@ -54,6 +100,9 @@ class _FakeSession:
                 "world_id": kwargs["w_id"],
                 "relation_type": kwargs["relation_type"],
                 "notes": kwargs["notes"],
+                "category": kwargs.get("category"),
+                "strength": kwargs.get("strength"),
+                "history": kwargs.get("history"),
                 "created_at": kwargs["created_at"],
             }
             record = {
@@ -70,7 +119,15 @@ class _FakeSession:
             for field in ("name", "entity_type", "description"):
                 if kwargs[field] is not None:
                     record[field] = kwargs[field]
+            if kwargs.get("structured_fields_json") is not None:
+                record["structured_fields_json"] = kwargs["structured_fields_json"]
             return _FakeResult([record])
+        if "SET s.status" in query:
+            record = self.db["suggestions"].get(kwargs["s_id"])
+            if record and record["world_id"] == kwargs["w_id"]:
+                record["status"] = kwargs["status"]
+                return _FakeResult([{"props": record}])
+            return _FakeResult([])
         if "DETACH DELETE w" in query:
             world = self.db["worlds"].pop(kwargs["w_id"], None)
             if not world:
@@ -129,6 +186,26 @@ class _FakeSession:
             return _FakeResult(
                 [v for v in self.db["relationships"].values() if v["rel_props"]["world_id"] == kwargs["w_id"]]
             )
+        if '"CanonSuggestion" IN labels' in query:
+            if "s_id" in kwargs:
+                record = self.db["suggestions"].get(kwargs["s_id"])
+                return _FakeResult([{"props": record}] if record and record["world_id"] == kwargs["w_id"] else [])
+            return _FakeResult(
+                [{"props": v} for v in self.db["suggestions"].values() if v["world_id"] == kwargs["w_id"]]
+            )
+        if '"TimelineEvent" IN labels' in query:
+            return _FakeResult(
+                [{"props": v} for v in self.db["timeline"].values() if v["world_id"] == kwargs["w_id"]]
+            )
+        if '"RevisionVersion" IN labels' in query:
+            return _FakeResult(
+                [
+                    {"props": v}
+                    for v in self.db["revisions"].values()
+                    if v["world_id"] == kwargs["w_id"]
+                    and (kwargs.get("entity_id") is None or v["entity_id"] == kwargs["entity_id"])
+                ]
+            )
         if "id: $id" in query or "properties(w).id = $id" in query:
             rec = self.db["worlds"].get(kwargs["id"])
             return _FakeResult([{"props": rec}] if rec else [])
@@ -136,7 +213,7 @@ class _FakeSession:
 
 class _FakeDriver:
     def __init__(self):
-        self.db = {"worlds": {}, "entities": {}, "relationships": {}}
+        self.db = {"worlds": {}, "entities": {}, "relationships": {}, "suggestions": {}, "timeline": {}, "revisions": {}}
         
     def session(self):
         return _FakeSession(self.db)
@@ -373,6 +450,81 @@ def test_relationship_crud_and_export(client: TestClient) -> None:
 
     deleted = client.delete(f"/worlds/{wid}/relationships/{rid}")
     assert deleted.status_code == 204
+
+
+def test_generation_suggestion_inbox_and_apply(client: TestClient) -> None:
+    fresh: WorldService = WorldService(driver=_FakeDriver(), llm=None)
+    app.dependency_overrides[get_world_service] = lambda: fresh
+    world = client.post("/worlds", json={"title": "Inbox"}).json()
+    wid = world["id"]
+
+    generated = client.post(
+        f"/worlds/{wid}/agentic-generate",
+        json={"instruction": "draft a lost library"},
+    )
+    assert generated.status_code == 200
+    suggestion_id = generated.json()["suggestion_id"]
+    assert suggestion_id is not None
+
+    suggestions = client.get(f"/worlds/{wid}/suggestions")
+    assert suggestions.status_code == 200
+    assert suggestions.json()["suggestions"][0]["status"] == "pending"
+
+    applied = client.post(
+        f"/worlds/{wid}/suggestions/{suggestion_id}/apply",
+        json={"mode": "create_entity", "name": "Lost Library", "entity_type": "Location"},
+    )
+    assert applied.status_code == 200
+    assert applied.json()["suggestion"]["status"] == "accepted"
+    assert applied.json()["entity"]["name"] == "Lost Library"
+
+
+def test_timeline_revisions_passage_and_export_presets(client: TestClient) -> None:
+    world = client.post("/worlds", json={"title": "Roadmap", "tone": "noir"}).json()
+    wid = world["id"]
+    entity = client.post(
+        f"/worlds/{wid}/entities",
+        json={
+            "name": "Asha",
+            "entity_type": "Character",
+            "description": "A detective with one impossible case.",
+            "structured_fields": {"goal": "Solve the bell murder", "secret": "She hid evidence."},
+        },
+    ).json()
+
+    timeline = client.post(
+        f"/worlds/{wid}/timeline",
+        json={
+            "title": "Bell Murder",
+            "event_order": 1,
+            "description": "The first bell cracks.",
+            "participants": [entity["id"]],
+            "causes": "A forged confession",
+            "consequences": "Asha reopens the case",
+        },
+    )
+    assert timeline.status_code == 201
+    assert client.get(f"/worlds/{wid}/timeline").json()["events"][0]["title"] == "Bell Murder"
+
+    client.patch(
+        f"/worlds/{wid}/entities/{entity['id']}",
+        json={"description": "A noir detective with one impossible case."},
+    )
+    revisions = client.get(f"/worlds/{wid}/revisions", params={"entity_id": entity["id"]})
+    assert revisions.status_code == 200
+    revision_id = revisions.json()["versions"][0]["id"]
+    restored = client.post(f"/worlds/{wid}/revisions/{revision_id}/restore")
+    assert restored.status_code == 200
+    assert restored.json()["description"] == "A detective with one impossible case."
+
+    passage = client.post(f"/worlds/{wid}/passage-check", json={"passage": "Asha entered the room."})
+    assert passage.status_code == 200
+    assert "issues" in passage.json()
+
+    exported = client.get(f"/worlds/{wid}/export/markdown", params={"preset": "timeline_only"})
+    assert exported.status_code == 200
+    assert exported.json()["preset"] == "timeline_only"
+    assert "# Roadmap Timeline" in exported.json()["content"]
 
 
 def test_entity_and_relationship_world_not_found(client: TestClient) -> None:

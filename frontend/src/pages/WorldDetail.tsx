@@ -20,6 +20,9 @@ import {
   Trash2,
 } from 'lucide-react';
 import {
+  applySuggestion,
+  checkPassage,
+  createTimelineEvent,
   createEntity,
   createRelationship,
   deleteEntity,
@@ -30,13 +33,21 @@ import {
   fetchEntities,
   fetchHealth,
   fetchRelationships,
+  fetchRevisions,
+  fetchSuggestions,
+  fetchTimelineEvents,
   fetchWorld,
   generateAgentic,
+  restoreRevision,
   updateEntity,
   type ConsistencyReport,
   type Entity,
+  type GenerationSuggestion,
   type HealthStatus,
+  type PassageCheck,
   type Relationship,
+  type RevisionVersion,
+  type TimelineEvent,
   type World,
 } from '../lib/api';
 import { buildWorldGraph, searchWorldGraph } from '../lib/worldGraph';
@@ -45,6 +56,22 @@ import WorldGraphView from './WorldGraphView';
 
 const ENTITY_GROUPS = ['Character', 'Location', 'Faction', 'Concept', 'Event', 'Other'];
 const ENTITY_TYPES = ['Character', 'Location', 'Faction', 'Concept', 'Event', 'Other'];
+const EXPORT_PRESETS = [
+  ['full_bible', 'Full Bible'],
+  ['character_dossier', 'Characters'],
+  ['faction_brief', 'Factions'],
+  ['location_gazetteer', 'Locations'],
+  ['timeline_only', 'Timeline'],
+  ['obsidian', 'Obsidian'],
+] as const;
+const TEMPLATE_FIELDS: Record<string, string[]> = {
+  Character: ['goal', 'secret', 'fear', 'voice'],
+  Location: ['hazards', 'economy', 'culture', 'landmark'],
+  Faction: ['resources', 'rivals', 'public_goal', 'secret'],
+  Event: ['causes', 'consequences', 'participants', 'date'],
+  Concept: ['rules', 'limits', 'cost', 'symbols'],
+  Other: ['role', 'origin', 'constraints'],
+};
 const PROMPTS = [
   {
     label: 'Faction Pressure',
@@ -64,13 +91,14 @@ const PROMPTS = [
   },
 ];
 
-type EntityForm = Pick<Entity, 'name' | 'entity_type' | 'description'>;
+type EntityForm = Pick<Entity, 'name' | 'entity_type' | 'description' | 'structured_fields'>;
 type WorkspaceView = 'editor' | 'graph';
 
 const blankEntity: EntityForm = {
   name: '',
   entity_type: 'Character',
   description: '',
+  structured_fields: {},
 };
 
 const displayType = (type: string) => {
@@ -89,6 +117,9 @@ const WorldDetail = () => {
   const [world, setWorld] = useState<World | null>(null);
   const [entities, setEntities] = useState<Entity[]>([]);
   const [relationships, setRelationships] = useState<Relationship[]>([]);
+  const [suggestions, setSuggestions] = useState<GenerationSuggestion[]>([]);
+  const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
+  const [revisions, setRevisions] = useState<RevisionVersion[]>([]);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [selectedRelationshipId, setSelectedRelationshipId] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<WorkspaceView>('editor');
@@ -102,7 +133,20 @@ const WorldDetail = () => {
     target_entity_id: '',
     relation_type: '',
     notes: '',
+    category: '',
+    strength: 3,
+    history: '',
   });
+  const [timelineForm, setTimelineForm] = useState({
+    title: '',
+    event_order: 1,
+    description: '',
+    causes: '',
+    consequences: '',
+  });
+  const [passageText, setPassageText] = useState('');
+  const [passageReport, setPassageReport] = useState<PassageCheck | null>(null);
+  const [exportPreset, setExportPreset] = useState<(typeof EXPORT_PRESETS)[number][0]>('full_bible');
   const [agenticInstruction, setAgenticInstruction] = useState('');
   const [saveGenerated, setSaveGenerated] = useState(false);
   const [generatedName, setGeneratedName] = useState('');
@@ -148,6 +192,16 @@ const WorldDetail = () => {
         items: searchResult.filteredEntities.filter((entity) => displayType(entity.entity_type) === group),
       })),
     [searchResult.filteredEntities],
+  );
+
+  const pendingSuggestions = useMemo(
+    () => suggestions.filter((suggestion) => suggestion.status === 'pending'),
+    [suggestions],
+  );
+
+  const templateFields = useMemo(
+    () => TEMPLATE_FIELDS[displayType(entityForm.entity_type)] ?? TEMPLATE_FIELDS.Other,
+    [entityForm.entity_type],
   );
 
   const graphEntities = useMemo(
@@ -206,15 +260,19 @@ const WorldDetail = () => {
 
   const loadWorkspace = async (worldId: string) => {
     setErrorMessage('');
-    const [worldData, entityData, relationshipData, healthData] = await Promise.all([
+    const [worldData, entityData, relationshipData, suggestionData, timelineData, healthData] = await Promise.all([
       fetchWorld(worldId),
       fetchEntities(worldId),
       fetchRelationships(worldId),
+      fetchSuggestions(worldId).catch(() => []),
+      fetchTimelineEvents(worldId).catch(() => []),
       fetchHealth().catch(() => null),
     ]);
     setWorld(worldData);
     setEntities(entityData);
     setRelationships(relationshipData);
+    setSuggestions(suggestionData);
+    setTimelineEvents(timelineData);
     setHealth(healthData);
     setSelectedEntityId((current) => current ?? entityData[0]?.id ?? null);
   };
@@ -253,11 +311,16 @@ const WorldDetail = () => {
         name: selectedEntity.name,
         entity_type: selectedEntity.entity_type,
         description: selectedEntity.description,
+        structured_fields: selectedEntity.structured_fields ?? {},
       });
+      if (id) {
+        fetchRevisions(id, selectedEntity.id).then(setRevisions).catch(() => setRevisions([]));
+      }
     } else {
       setEntityForm(blankEntity);
+      setRevisions([]);
     }
-  }, [selectedEntity]);
+  }, [id, selectedEntity]);
 
   const refreshEntities = async () => {
     if (!id) return;
@@ -267,6 +330,16 @@ const WorldDetail = () => {
     ]);
     setEntities(entityData);
     setRelationships(relationshipData);
+  };
+
+  const refreshReviewData = async () => {
+    if (!id) return;
+    const [suggestionData, timelineData] = await Promise.all([
+      fetchSuggestions(id).catch(() => []),
+      fetchTimelineEvents(id).catch(() => []),
+    ]);
+    setSuggestions(suggestionData);
+    setTimelineEvents(timelineData);
   };
 
   const selectEntity = (entityId: string | null) => {
@@ -364,7 +437,8 @@ const WorldDetail = () => {
         setSelectedEntityId(result.entity_id);
         setStatusMessage('Generated lore saved.');
       } else {
-        setStatusMessage('Generated lore ready.');
+        await refreshReviewData();
+        setStatusMessage('Generated lore added to the canon inbox.');
       }
     } catch {
       setErrorMessage('Unable to generate lore.');
@@ -448,6 +522,9 @@ const WorldDetail = () => {
         target_entity_id: '',
         relation_type: '',
         notes: '',
+        category: '',
+        strength: 3,
+        history: '',
       });
       setRelationships(await fetchRelationships(id));
       setStatusMessage('Relationship created.');
@@ -463,7 +540,7 @@ const WorldDetail = () => {
     setBusy(true);
     setErrorMessage('');
     try {
-      const exported = await exportMarkdown(id);
+      const exported = await exportMarkdown(id, exportPreset);
       const blob = new Blob([exported.content], { type: 'text/markdown;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -484,7 +561,7 @@ const WorldDetail = () => {
     setBusy(true);
     setErrorMessage('');
     try {
-      const exported = await exportMarkdown(id);
+      const exported = await exportMarkdown(id, exportPreset);
       setMarkdownPreview({ filename: exported.filename, content: exported.content });
       setStatusMessage('Markdown preview ready.');
     } catch {
@@ -503,6 +580,85 @@ const WorldDetail = () => {
       setStatusMessage('Consistency report ready.');
     } catch {
       setErrorMessage('Unable to run consistency report.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSuggestionApply = async (
+    suggestion: GenerationSuggestion,
+    mode: 'create_entity' | 'append_to_entity' | 'replace_entity' | 'discard',
+  ) => {
+    if (!id) return;
+    setBusy(true);
+    setErrorMessage('');
+    try {
+      const result = await applySuggestion(id, suggestion.id, {
+        mode,
+        entity_id: mode === 'create_entity' || mode === 'discard' ? undefined : selectedEntityId ?? undefined,
+        name: generatedName.trim() || suggestion.suggested_name || 'Generated Lore',
+        entity_type: generatedType || suggestion.suggested_type || 'Concept',
+      });
+      await Promise.all([refreshEntities(), refreshReviewData()]);
+      if (result.entity?.id) setSelectedEntityId(result.entity.id);
+      setStatusMessage(mode === 'discard' ? 'Suggestion discarded.' : 'Suggestion applied to canon.');
+    } catch {
+      setErrorMessage('Unable to apply suggestion.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleTimelineSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!id || !timelineForm.title.trim()) return;
+    setBusy(true);
+    setErrorMessage('');
+    try {
+      await createTimelineEvent(id, {
+        title: timelineForm.title.trim(),
+        event_order: timelineForm.event_order,
+        description: timelineForm.description,
+        participants: selectedEntityId ? [selectedEntityId] : [],
+        causes: timelineForm.causes || null,
+        consequences: timelineForm.consequences || null,
+      });
+      setTimelineForm({ title: '', event_order: timelineForm.event_order + 1, description: '', causes: '', consequences: '' });
+      setTimelineEvents(await fetchTimelineEvents(id));
+      setStatusMessage('Timeline event created.');
+    } catch {
+      setErrorMessage('Unable to create timeline event.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handlePassageCheck = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!id || !passageText.trim()) return;
+    setBusy(true);
+    setErrorMessage('');
+    try {
+      setPassageReport(await checkPassage(id, passageText));
+      setStatusMessage('Passage check complete.');
+    } catch {
+      setErrorMessage('Unable to check passage.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRestoreRevision = async (revisionId: string) => {
+    if (!id) return;
+    setBusy(true);
+    setErrorMessage('');
+    try {
+      const restored = await restoreRevision(id, revisionId);
+      await refreshEntities();
+      setSelectedEntityId(restored.id);
+      setStatusMessage('Revision restored.');
+    } catch {
+      setErrorMessage('Unable to restore revision.');
     } finally {
       setBusy(false);
     }
@@ -589,6 +745,14 @@ const WorldDetail = () => {
             <FileText size={16} />
             Preview
           </button>
+          <select
+            className="form-input compact-select"
+            value={exportPreset}
+            onChange={(event) => setExportPreset(event.target.value as typeof exportPreset)}
+            title="Export preset"
+          >
+            {EXPORT_PRESETS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
           <button className="btn btn-secondary" onClick={handleExport} disabled={busy}>
             <Download size={16} />
             Export
@@ -655,6 +819,38 @@ const WorldDetail = () => {
             </section>
           )}
         </div>
+      )}
+
+      {pendingSuggestions.length > 0 && (
+        <section className="glass content-section">
+          <div className="section-header">
+            <Sparkles className="text-primary" />
+            <h2>Canon Inbox</h2>
+            <span className="review-badge">{pendingSuggestions.length} pending</span>
+          </div>
+          <div className="suggestion-list">
+            {pendingSuggestions.map((suggestion) => (
+              <article className="suggestion-item" key={suggestion.id}>
+                <div>
+                  <strong>{suggestion.suggested_name || 'Generated lore'}</strong>
+                  <p className="text-muted">{suggestion.instruction}</p>
+                  <pre className="lore-content compact-lore">{suggestion.content}</pre>
+                </div>
+                <div className="form-actions">
+                  <button className="btn btn-secondary" type="button" onClick={() => handleSuggestionApply(suggestion, 'append_to_entity')} disabled={!selectedEntity || busy}>
+                    Append
+                  </button>
+                  <button className="btn btn-secondary" type="button" onClick={() => handleSuggestionApply(suggestion, 'create_entity')} disabled={busy}>
+                    Accept New
+                  </button>
+                  <button className="btn btn-danger" type="button" onClick={() => handleSuggestionApply(suggestion, 'discard')} disabled={busy}>
+                    Discard
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
       )}
 
       <div className="workspace-grid">
@@ -762,6 +958,24 @@ const WorldDetail = () => {
                     rows={9}
                     className="form-input"
                   />
+                  <div className="template-grid">
+                    {templateFields.map((field) => (
+                      <label key={field}>
+                        <span>{field.replaceAll('_', ' ')}</span>
+                        <input
+                          value={entityForm.structured_fields?.[field] ?? ''}
+                          onChange={(event) => setEntityForm({
+                            ...entityForm,
+                            structured_fields: {
+                              ...(entityForm.structured_fields ?? {}),
+                              [field]: event.target.value,
+                            },
+                          })}
+                          className="form-input"
+                        />
+                      </label>
+                    ))}
+                  </div>
                   <div className="form-actions">
                     <button type="submit" className="btn btn-primary" disabled={busy}>
                       <Save size={16} />
@@ -820,6 +1034,27 @@ const WorldDetail = () => {
                     placeholder="Notes"
                     className="form-input"
                   />
+                  <select
+                    value={relationshipForm.category}
+                    onChange={(event) => setRelationshipForm({ ...relationshipForm, category: event.target.value })}
+                    className="form-input"
+                  >
+                    <option value="">Category</option>
+                    <option>Alliance</option>
+                    <option>Conflict</option>
+                    <option>Kinship</option>
+                    <option>Trade</option>
+                    <option>History</option>
+                  </select>
+                  <input
+                    value={relationshipForm.strength}
+                    onChange={(event) => setRelationshipForm({ ...relationshipForm, strength: Number(event.target.value) })}
+                    className="form-input"
+                    min={1}
+                    max={5}
+                    type="number"
+                    title="Strength"
+                  />
                   <button type="submit" className="btn btn-primary" disabled={busy || entities.length < 2}>
                     <Plus size={16} />
                     Add
@@ -849,6 +1084,11 @@ const WorldDetail = () => {
                           <span> {relationship.relation_type} </span>
                           <strong>{relationship.target_entity_name}</strong>
                           {relationship.notes && <p>{relationship.notes}</p>}
+                          {(relationship.category || relationship.strength || relationship.history) && (
+                            <small>
+                              {[relationship.category, relationship.strength ? `${relationship.strength}/5` : null, relationship.history].filter(Boolean).join(' · ')}
+                            </small>
+                          )}
                         </div>
                         <button
                           className="icon-button danger"
@@ -877,6 +1117,86 @@ const WorldDetail = () => {
                   )}
                 </div>
               </section>
+
+              <section className="glass content-section">
+                <div className="section-header">
+                  <Clock className="text-primary" />
+                  <h2>Timeline</h2>
+                </div>
+                <form onSubmit={handleTimelineSubmit} className="timeline-form">
+                  <input
+                    value={timelineForm.title}
+                    onChange={(event) => setTimelineForm({ ...timelineForm, title: event.target.value })}
+                    placeholder="Event title"
+                    className="form-input"
+                  />
+                  <input
+                    value={timelineForm.event_order}
+                    onChange={(event) => setTimelineForm({ ...timelineForm, event_order: Number(event.target.value) })}
+                    type="number"
+                    className="form-input"
+                    min={1}
+                  />
+                  <textarea
+                    value={timelineForm.description}
+                    onChange={(event) => setTimelineForm({ ...timelineForm, description: event.target.value })}
+                    placeholder="Event description"
+                    rows={3}
+                    className="form-input"
+                  />
+                  <div className="form-row compact">
+                    <input
+                      value={timelineForm.causes}
+                      onChange={(event) => setTimelineForm({ ...timelineForm, causes: event.target.value })}
+                      placeholder="Causes"
+                      className="form-input"
+                    />
+                    <input
+                      value={timelineForm.consequences}
+                      onChange={(event) => setTimelineForm({ ...timelineForm, consequences: event.target.value })}
+                      placeholder="Consequences"
+                      className="form-input"
+                    />
+                  </div>
+                  <button className="btn btn-primary" type="submit" disabled={busy}>
+                    <Plus size={16} />
+                    Add Event
+                  </button>
+                </form>
+                <div className="timeline-list">
+                  {timelineEvents.length === 0 ? (
+                    <p className="text-muted">No timeline events yet.</p>
+                  ) : timelineEvents.map((event) => (
+                    <article className="timeline-item" key={event.id}>
+                      <span>{event.event_order}</span>
+                      <div>
+                        <strong>{event.title}</strong>
+                        {event.description && <p>{event.description}</p>}
+                        {(event.causes || event.consequences) && (
+                          <small>{[event.causes && `Cause: ${event.causes}`, event.consequences && `Consequence: ${event.consequences}`].filter(Boolean).join(' · ')}</small>
+                        )}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </section>
+
+              {selectedEntity && revisions.length > 0 && (
+                <section className="glass content-section">
+                  <div className="section-header">
+                    <FileText className="text-secondary" />
+                    <h2>Revision History</h2>
+                  </div>
+                  <div className="revision-list">
+                    {revisions.slice(0, 5).map((revision) => (
+                      <button className="revision-item" type="button" key={revision.id} onClick={() => handleRestoreRevision(revision.id)}>
+                        <span>{new Date(revision.created_at).toLocaleString()}</span>
+                        <small>{revision.source} {revision.field_name}</small>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              )}
             </>
           ) : (
             <section className="glass content-section graph-section">
@@ -1031,6 +1351,42 @@ const WorldDetail = () => {
               </div>
             </section>
           )}
+
+          <section className="glass agent-section">
+            <div className="agent-header">
+              <ClipboardCheck className="agent-icon" size={22} />
+              <h3>Passage Check</h3>
+            </div>
+            <form onSubmit={handlePassageCheck} className="agent-form">
+              <textarea
+                value={passageText}
+                onChange={(event) => setPassageText(event.target.value)}
+                placeholder="Paste a scene excerpt"
+                rows={5}
+                className="form-input"
+              />
+              <button type="submit" className="btn btn-secondary" disabled={busy || !passageText.trim()}>
+                <ClipboardCheck size={16} />
+                Check
+              </button>
+            </form>
+            {passageReport && (
+              <div className="issue-list">
+                <p className="text-secondary">{passageReport.summary}</p>
+                {passageReport.issues.map((issue) => (
+                  <button
+                    className={`issue-item ${issue.severity}`}
+                    key={`${issue.code}-${issue.entity_id ?? issue.message}`}
+                    type="button"
+                    onClick={() => issue.entity_id && selectEntity(issue.entity_id)}
+                  >
+                    <span className="issue-severity">{issue.severity}</span>
+                    <span className="issue-body">{issue.message}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
         </aside>
       </div>
     </div>

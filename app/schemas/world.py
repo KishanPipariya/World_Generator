@@ -42,6 +42,7 @@ class EntityCreate(BaseModel):
     name: str = Field(..., max_length=200)
     entity_type: str = Field(..., max_length=100)
     description: str
+    structured_fields: dict[str, str] = Field(default_factory=dict)
 
 
 class EntityRead(EntityCreate):
@@ -56,6 +57,7 @@ class EntityUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=200)
     entity_type: str | None = Field(default=None, max_length=100)
     description: str | None = None
+    structured_fields: dict[str, str] | None = None
 
 
 class EntityListResponse(BaseModel):
@@ -67,6 +69,9 @@ class RelationshipCreate(BaseModel):
     target_entity_id: UUID
     relation_type: str = Field(..., max_length=100)
     notes: str | None = Field(default=None, max_length=5000)
+    category: str | None = Field(default=None, max_length=100)
+    strength: int | None = Field(default=None, ge=1, le=5)
+    history: str | None = Field(default=None, max_length=5000)
 
 
 class RelationshipRead(RelationshipCreate):
@@ -87,6 +92,7 @@ class MarkdownExportResponse(BaseModel):
     world_id: UUID
     filename: str
     content: str
+    preset: str = "full_bible"
 
 
 class DemoWorldResponse(BaseModel):
@@ -127,3 +133,101 @@ class AgenticGenerateResponse(BaseModel):
     instruction: str
     content: str
     entity_id: UUID | None = None
+    suggestion_id: UUID | None = None
+
+
+ExportPreset = Literal[
+    "full_bible",
+    "character_dossier",
+    "faction_brief",
+    "location_gazetteer",
+    "timeline_only",
+    "obsidian",
+]
+
+
+class GenerationSuggestionCreate(BaseModel):
+    instruction: str
+    content: str
+    suggested_name: str | None = Field(default=None, max_length=200)
+    suggested_type: str | None = Field(default=None, max_length=100)
+
+
+class GenerationSuggestionRead(GenerationSuggestionCreate):
+    id: UUID
+    world_id: UUID
+    status: Literal["pending", "accepted", "discarded"]
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class GenerationSuggestionListResponse(BaseModel):
+    suggestions: list[GenerationSuggestionRead]
+
+
+class SuggestionApplyRequest(BaseModel):
+    mode: Literal["create_entity", "append_to_entity", "replace_entity", "discard"]
+    entity_id: UUID | None = None
+    name: str | None = Field(default=None, max_length=200)
+    entity_type: str | None = Field(default=None, max_length=100)
+    description: str | None = None
+
+
+class SuggestionApplyResponse(BaseModel):
+    suggestion: GenerationSuggestionRead
+    entity: EntityRead | None = None
+
+
+class TimelineEventCreate(BaseModel):
+    title: str = Field(..., max_length=200)
+    event_order: int
+    description: str = ""
+    participants: list[UUID] = Field(default_factory=list)
+    causes: str | None = Field(default=None, max_length=5000)
+    consequences: str | None = Field(default=None, max_length=5000)
+
+
+class TimelineEventRead(TimelineEventCreate):
+    id: UUID
+    world_id: UUID
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TimelineEventListResponse(BaseModel):
+    events: list[TimelineEventRead]
+
+
+class RevisionVersionRead(BaseModel):
+    id: UUID
+    world_id: UUID
+    entity_id: UUID | None = None
+    subject_type: Literal["entity", "world"]
+    field_name: str
+    previous_value: str | None = None
+    new_value: str | None = None
+    source: Literal["manual", "generated", "restore"] = "manual"
+    created_at: datetime
+
+
+class RevisionVersionListResponse(BaseModel):
+    versions: list[RevisionVersionRead]
+
+
+class PassageCheckRequest(BaseModel):
+    passage: str = Field(..., min_length=1, max_length=20000)
+
+
+class PassageCheckIssue(BaseModel):
+    code: str
+    severity: Literal["info", "warning", "error"]
+    message: str
+    entity_id: UUID | None = None
+
+
+class PassageCheckResponse(BaseModel):
+    world_id: UUID
+    summary: str
+    issues: list[PassageCheckIssue]
