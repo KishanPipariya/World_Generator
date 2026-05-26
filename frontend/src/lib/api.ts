@@ -54,12 +54,20 @@ export interface DemoWorld {
   relationships: Relationship[];
 }
 
+export type ConsistencyIssueStatus = 'open' | 'ignored' | 'resolved' | 'reopened';
+
 export interface ConsistencyIssue {
+  issue_id?: string | null;
   code: string;
   severity: 'info' | 'warning' | 'error';
   message: string;
+  target_type?: 'world' | 'entity' | 'relationship' | null;
   entity_id: string | null;
   relationship_id: string | null;
+  status?: ConsistencyIssueStatus | null;
+  note?: string | null;
+  first_seen?: string | null;
+  last_seen?: string | null;
 }
 
 export interface ConsistencyReport {
@@ -67,6 +75,17 @@ export interface ConsistencyReport {
   score: number;
   summary: string;
   issues: ConsistencyIssue[];
+}
+
+export interface ConsistencyIssueState extends Required<Omit<ConsistencyIssue, 'issue_id'>> {
+  id: string;
+  world_id: string;
+  fingerprint: string;
+  status: ConsistencyIssueStatus;
+  target_type: 'world' | 'entity' | 'relationship';
+  first_seen: string;
+  last_seen: string;
+  updated_at: string;
 }
 
 export interface GenerationSuggestion {
@@ -276,6 +295,20 @@ export const exportMarkdown = async (
 
 export const fetchConsistencyReport = async (worldId: string): Promise<ConsistencyReport> => {
   const response = await api.get(`/worlds/${worldId}/consistency`);
+  return response.data;
+};
+
+export const fetchConsistencyIssues = async (worldId: string): Promise<ConsistencyIssueState[]> => {
+  const response = await api.get(`/worlds/${worldId}/consistency/issues`);
+  return response.data.issues;
+};
+
+export const updateConsistencyIssue = async (
+  worldId: string,
+  issueId: string,
+  payload: { status?: ConsistencyIssueStatus; note?: string | null },
+): Promise<ConsistencyIssueState> => {
+  const response = await api.patch(`/worlds/${worldId}/consistency/issues/${issueId}`, payload);
   return response.data;
 };
 

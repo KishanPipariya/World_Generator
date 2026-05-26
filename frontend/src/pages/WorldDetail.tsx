@@ -5,9 +5,11 @@ import {
   Activity,
   Bot,
   BookOpen,
+  Check,
   ClipboardCheck,
   Clock,
   Download,
+  EyeOff,
   FileText,
   Link2,
   Network,
@@ -32,6 +34,7 @@ import {
   deleteWorld,
   deleteRelationship,
   exportMarkdown,
+  fetchConsistencyIssues,
   fetchConsistencyReport,
   fetchEntities,
   fetchGraphViews,
@@ -44,6 +47,9 @@ import {
   fetchWorld,
   generateAgentic,
   restoreRevision,
+  updateConsistencyIssue,
+  type ConsistencyIssueState,
+  type ConsistencyIssueStatus,
   updateEntity,
   type ConsistencyReport,
   type Entity,
@@ -175,6 +181,8 @@ const WorldDetail = () => {
   const [passageText, setPassageText] = useState('');
   const [passageReport, setPassageReport] = useState<PassageCheck | null>(null);
   const [exportPreset, setExportPreset] = useState<(typeof EXPORT_PRESETS)[number][0]>('full_bible');
+  const [issueStates, setIssueStates] = useState<ConsistencyIssueState[]>([]);
+  const [issueNotes, setIssueNotes] = useState<Record<string, string>>({});
   const [agenticInstruction, setAgenticInstruction] = useState('');
   const [saveGenerated, setSaveGenerated] = useState(false);
   const [generatedName, setGeneratedName] = useState('');
@@ -225,6 +233,11 @@ const WorldDetail = () => {
   const pendingSuggestions = useMemo(
     () => suggestions.filter((suggestion) => suggestion.status === 'pending'),
     [suggestions],
+  );
+
+  const archivedIssueStates = useMemo(
+    () => issueStates.filter((issue) => issue.status === 'ignored' || issue.status === 'resolved'),
+    [issueStates],
   );
 
   const templateFields = useMemo(
@@ -619,10 +632,76 @@ const WorldDetail = () => {
     setBusy(true);
     setErrorMessage('');
     try {
-      setReport(await fetchConsistencyReport(id));
+      const [nextReport, nextIssueStates] = await Promise.all([
+        fetchConsistencyReport(id),
+        fetchConsistencyIssues(id),
+      ]);
+      setReport(nextReport);
+      setIssueStates(nextIssueStates);
+      setIssueNotes(Object.fromEntries(
+        [
+          ...nextReport.issues
+            .filter((issue) => issue.issue_id)
+            .map((issue) => [issue.issue_id as string, issue.note ?? '']),
+          ...nextIssueStates.map((issue) => [issue.id, issue.note ?? '']),
+        ],
+      ));
       setStatusMessage('Consistency report ready.');
     } catch {
       setErrorMessage('Unable to run consistency report.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleIssueUpdate = async (
+    issue: ConsistencyReport['issues'][number],
+    payload: { status?: ConsistencyIssueStatus; note?: string | null },
+  ) => {
+    if (!id || !issue.issue_id) return;
+    setBusy(true);
+    setErrorMessage('');
+    try {
+      const updated = await updateConsistencyIssue(id, issue.issue_id, payload);
+      setReport((current) => current ? {
+        ...current,
+        issues: current.issues
+          .map((item) => item.issue_id === updated.id ? {
+            ...item,
+            status: updated.status,
+            note: updated.note,
+            first_seen: updated.first_seen,
+            last_seen: updated.last_seen,
+          } : item)
+          .filter((item) => item.status !== 'ignored' && item.status !== 'resolved'),
+      } : current);
+      setIssueStates((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setIssueNotes((current) => ({ ...current, [updated.id]: updated.note ?? '' }));
+      setStatusMessage(payload.note !== undefined ? 'Issue note saved.' : 'Issue updated.');
+    } catch {
+      setErrorMessage('Unable to update issue.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleIssueStateUpdate = async (
+    issue: ConsistencyIssueState,
+    payload: { status?: ConsistencyIssueStatus; note?: string | null },
+  ) => {
+    if (!id) return;
+    setBusy(true);
+    setErrorMessage('');
+    try {
+      const updated = await updateConsistencyIssue(id, issue.id, payload);
+      setIssueStates((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setIssueNotes((current) => ({ ...current, [updated.id]: updated.note ?? '' }));
+      if (updated.status === 'open' || updated.status === 'reopened') {
+        setReport(await fetchConsistencyReport(id));
+      }
+      setStatusMessage(payload.note !== undefined ? 'Issue note saved.' : 'Issue reopened.');
+    } catch {
+      setErrorMessage('Unable to update issue.');
     } finally {
       setBusy(false);
     }
@@ -918,20 +997,126 @@ const WorldDetail = () => {
                 {report.issues.length === 0 ? (
                   <p className="text-muted">No issues found.</p>
                 ) : report.issues.map((issue) => (
-                  <button
-                    key={`${issue.code}-${issue.entity_id ?? issue.relationship_id ?? issue.message}`}
+                  <div
+                    key={issue.issue_id ?? `${issue.code}-${issue.entity_id ?? issue.relationship_id ?? issue.message}`}
                     className={`issue-item ${issue.severity}`}
-                    type="button"
-                    onClick={() => handleIssueSelect(issue)}
                   >
-                    <span className="issue-severity">{issue.severity}</span>
-                    <span className="issue-body">
-                      <span className="issue-code">{issue.code.replaceAll('_', ' ')}</span>
-                      {issue.message}
-                    </span>
-                  </button>
+                    <button
+                      className="issue-content"
+                      type="button"
+                      onClick={() => handleIssueSelect(issue)}
+                    >
+                      <span className="issue-severity">{issue.severity}</span>
+                      <span className="issue-body">
+                        <span className="issue-code">{issue.code.replaceAll('_', ' ')}</span>
+                        {issue.message}
+                        {issue.status && <span className="issue-status">{issue.status}</span>}
+                      </span>
+                    </button>
+                    {issue.issue_id && (
+                      <div className="issue-controls">
+                        <button
+                          className="icon-button"
+                          type="button"
+                          title="Ignore issue"
+                          disabled={busy}
+                          onClick={() => handleIssueUpdate(issue, { status: 'ignored' })}
+                        >
+                          <EyeOff size={16} />
+                        </button>
+                        <button
+                          className="icon-button"
+                          type="button"
+                          title="Resolve issue"
+                          disabled={busy}
+                          onClick={() => handleIssueUpdate(issue, { status: 'resolved' })}
+                        >
+                          <Check size={16} />
+                        </button>
+                        {issue.status === 'reopened' && (
+                          <button
+                            className="icon-button"
+                            type="button"
+                            title="Mark open"
+                            disabled={busy}
+                            onClick={() => handleIssueUpdate(issue, { status: 'open' })}
+                          >
+                            <RefreshCcw size={16} />
+                          </button>
+                        )}
+                        <input
+                          className="issue-note-input"
+                          value={issueNotes[issue.issue_id] ?? issue.note ?? ''}
+                          onChange={(event) => setIssueNotes((current) => ({
+                            ...current,
+                            [issue.issue_id as string]: event.target.value,
+                          }))}
+                          placeholder="Note"
+                        />
+                        <button
+                          className="icon-button"
+                          type="button"
+                          title="Save note"
+                          disabled={busy}
+                          onClick={() => handleIssueUpdate(issue, {
+                            note: issueNotes[issue.issue_id ?? ''] ?? '',
+                          })}
+                        >
+                          <Save size={16} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
+              {archivedIssueStates.length > 0 && (
+                <div className="issue-archive">
+                  <h3>Managed Issues</h3>
+                  {archivedIssueStates.map((issue) => (
+                    <div key={issue.id} className={`issue-item ${issue.severity}`}>
+                      <div className="issue-content">
+                        <span className="issue-severity">{issue.severity}</span>
+                        <span className="issue-body">
+                          <span className="issue-code">{issue.code.replaceAll('_', ' ')}</span>
+                          {issue.message}
+                          <span className="issue-status">{issue.status}</span>
+                        </span>
+                      </div>
+                      <div className="issue-controls">
+                        <button
+                          className="icon-button"
+                          type="button"
+                          title="Reopen issue"
+                          disabled={busy}
+                          onClick={() => handleIssueStateUpdate(issue, { status: 'open' })}
+                        >
+                          <RefreshCcw size={16} />
+                        </button>
+                        <input
+                          className="issue-note-input"
+                          value={issueNotes[issue.id] ?? issue.note ?? ''}
+                          onChange={(event) => setIssueNotes((current) => ({
+                            ...current,
+                            [issue.id]: event.target.value,
+                          }))}
+                          placeholder="Note"
+                        />
+                        <button
+                          className="icon-button"
+                          type="button"
+                          title="Save note"
+                          disabled={busy}
+                          onClick={() => handleIssueStateUpdate(issue, {
+                            note: issueNotes[issue.id] ?? '',
+                          })}
+                        >
+                          <Save size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
           )}
           {markdownPreview && (

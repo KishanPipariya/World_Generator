@@ -6,6 +6,9 @@ from app.deps import get_world_service
 from app.schemas.world import (
     AgenticGenerateRequest,
     AgenticGenerateResponse,
+    ConsistencyIssueStateListResponse,
+    ConsistencyIssueStateRead,
+    ConsistencyIssueUpdate,
     ConsistencyReportResponse,
     DemoWorldResponse,
     DraftCreate,
@@ -217,6 +220,30 @@ def consistency_report(
     if not report:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
     return report
+
+
+@router.get("/{world_id}/consistency/issues", response_model=ConsistencyIssueStateListResponse)
+def list_consistency_issues(
+    world_id: UUID,
+    svc: WorldService = Depends(get_world_service),
+) -> ConsistencyIssueStateListResponse:
+    issues = svc.list_consistency_issue_states(world_id)
+    if issues is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
+    return ConsistencyIssueStateListResponse(issues=issues)
+
+
+@router.patch("/{world_id}/consistency/issues/{issue_id}", response_model=ConsistencyIssueStateRead)
+def update_consistency_issue(
+    world_id: UUID,
+    issue_id: UUID,
+    body: ConsistencyIssueUpdate,
+    svc: WorldService = Depends(get_world_service),
+) -> ConsistencyIssueStateRead:
+    issue = svc.update_consistency_issue_state(world_id, issue_id, body)
+    if not issue:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Issue not found")
+    return issue
 
 
 @router.post(

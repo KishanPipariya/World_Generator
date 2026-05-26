@@ -60,6 +60,27 @@ class _FakeSession:
             }
             self.db["suggestions"][kwargs["s_id"]] = record
             return _FakeResult([{"props": record}])
+        if "CREATE (w)<-[:BELONGS_TO]-(i:CanonIssue" in query:
+            if kwargs["w_id"] not in self.db["worlds"]:
+                return _FakeResult([])
+            record = {
+                "id": kwargs["issue_id"],
+                "world_id": kwargs["w_id"],
+                "fingerprint": kwargs["fingerprint"],
+                "code": kwargs["code"],
+                "severity": kwargs["severity"],
+                "message": kwargs["message"],
+                "target_type": kwargs["target_type"],
+                "entity_id": kwargs["entity_id"],
+                "relationship_id": kwargs["relationship_id"],
+                "status": "open",
+                "note": kwargs["note"],
+                "first_seen": kwargs["first_seen"],
+                "last_seen": kwargs["last_seen"],
+                "updated_at": kwargs["updated_at"],
+            }
+            self.db["canon_issues"][kwargs["issue_id"]] = record
+            return _FakeResult([{"props": record}])
         if "CREATE (w)<-[:BELONGS_TO]-(t:TimelineEvent" in query:
             if kwargs["w_id"] not in self.db["worlds"]:
                 return _FakeResult([])
@@ -198,6 +219,33 @@ class _FakeSession:
                 record["status"] = kwargs["status"]
                 return _FakeResult([{"props": record}])
             return _FakeResult([])
+        if "SET i.status = coalesce" in query:
+            record = self.db["canon_issues"].get(kwargs["issue_id"])
+            if record and record["world_id"] == kwargs["w_id"]:
+                if kwargs["status"] is not None:
+                    record["status"] = kwargs["status"]
+                if kwargs["note_is_set"]:
+                    record["note"] = kwargs["note"]
+                record["updated_at"] = kwargs["updated_at"]
+                return _FakeResult([{"props": record}])
+            return _FakeResult([])
+        if "SET i.code = $code" in query:
+            record = self.db["canon_issues"].get(kwargs["issue_id"])
+            if record:
+                for field in (
+                    "code",
+                    "severity",
+                    "message",
+                    "target_type",
+                    "entity_id",
+                    "relationship_id",
+                    "status",
+                    "last_seen",
+                    "updated_at",
+                ):
+                    record[field] = kwargs[field]
+                return _FakeResult([{"props": record}])
+            return _FakeResult([])
         if "SET d.title" in query:
             record = self.db["drafts"].get(kwargs["draft_id"])
             if record and record["world_id"] == kwargs["w_id"]:
@@ -241,6 +289,13 @@ class _FakeSession:
                 relationship_id: relationship
                 for relationship_id, relationship in self.db["relationships"].items()
                 if relationship["rel_props"]["world_id"] != kwargs["w_id"]
+            }
+            return _FakeResult([])
+        if '"CanonIssue" IN labels(i)' in query and "DETACH DELETE i" in query:
+            self.db["canon_issues"] = {
+                issue_id: issue
+                for issue_id, issue in self.db["canon_issues"].items()
+                if issue["world_id"] != kwargs["w_id"]
             }
             return _FakeResult([])
         if "DELETE linked, e" in query:
@@ -298,6 +353,13 @@ class _FakeSession:
             return _FakeResult(
                 [{"props": v} for v in self.db["suggestions"].values() if v["world_id"] == kwargs["w_id"]]
             )
+        if '"CanonIssue" IN labels(i)' in query:
+            if "issue_id" in kwargs:
+                record = self.db["canon_issues"].get(kwargs["issue_id"])
+                return _FakeResult([{"props": record}] if record and record["world_id"] == kwargs["w_id"] else [])
+            return _FakeResult(
+                [{"props": v} for v in self.db["canon_issues"].values() if v["world_id"] == kwargs["w_id"]]
+            )
         if '"TimelineEvent" IN labels' in query:
             return _FakeResult(
                 [{"props": v} for v in self.db["timeline"].values() if v["world_id"] == kwargs["w_id"]]
@@ -346,6 +408,7 @@ class _FakeDriver:
             "entities": {},
             "relationships": {},
             "suggestions": {},
+            "canon_issues": {},
             "timeline": {},
             "revisions": {},
             "graph_views": {},
@@ -890,6 +953,63 @@ def test_consistency_report_flags_canon_dashboard_issues(client: TestClient) -> 
         issue["relationship_id"] in {first_relationship["id"], second_relationship["id"]}
         and issue["code"] == "missing_relationship_context"
         for issue in issues
+    )
+
+
+def test_consistency_issue_lifecycle_api(client: TestClient) -> None:
+    r = client.post("/worlds", json={"title": "Sparse", "tone": "bright"})
+    wid = r.json()["id"]
+    client.post(
+        f"/worlds/{wid}/entities",
+        json={"name": "A", "entity_type": "Character", "description": ""},
+    )
+
+    report = client.get(f"/worlds/{wid}/consistency")
+    assert report.status_code == 200
+    payload = report.json()
+    missing_description = next(
+        issue for issue in payload["issues"] if issue["code"] == "missing_description"
+    )
+    issue_id = missing_description["issue_id"]
+    assert missing_description["status"] == "open"
+
+    listed = client.get(f"/worlds/{wid}/consistency/issues")
+    assert listed.status_code == 200
+    assert any(issue["id"] == issue_id for issue in listed.json()["issues"])
+
+    ignored = client.patch(
+        f"/worlds/{wid}/consistency/issues/{issue_id}",
+        json={"status": "ignored", "note": "Not relevant"},
+    )
+    assert ignored.status_code == 200
+    assert ignored.json()["status"] == "ignored"
+    assert ignored.json()["note"] == "Not relevant"
+
+    filtered_report = client.get(f"/worlds/{wid}/consistency").json()
+    assert all(issue["issue_id"] != issue_id for issue in filtered_report["issues"])
+    assert filtered_report["score"] > payload["score"]
+
+    resolved = client.patch(
+        f"/worlds/{wid}/consistency/issues/{issue_id}",
+        json={"status": "resolved"},
+    )
+    assert resolved.status_code == 200
+    reopened_report = client.get(f"/worlds/{wid}/consistency").json()
+    reopened = next(issue for issue in reopened_report["issues"] if issue["issue_id"] == issue_id)
+    assert reopened["status"] == "reopened"
+    assert reopened["note"] == "Not relevant"
+
+
+def test_consistency_issue_api_404s(client: TestClient) -> None:
+    wid = "00000000-0000-0000-0000-000000000099"
+    issue_id = "00000000-0000-0000-0000-000000000088"
+    assert client.get(f"/worlds/{wid}/consistency/issues").status_code == 404
+    assert (
+        client.patch(
+            f"/worlds/{wid}/consistency/issues/{issue_id}",
+            json={"status": "ignored"},
+        ).status_code
+        == 404
     )
 
 

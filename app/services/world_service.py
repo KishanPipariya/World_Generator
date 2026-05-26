@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, Protocol
@@ -10,6 +11,8 @@ from neo4j import Driver
 
 from app.schemas.world import (
     ConsistencyIssue,
+    ConsistencyIssueStateRead,
+    ConsistencyIssueUpdate,
     ConsistencyReportResponse,
     DemoWorldResponse,
     DraftCheckHistoryItem,
@@ -205,6 +208,11 @@ class WorldService:
         WHERE type(belongs) = "BELONGS_TO" AND "Entity" IN labels(e)
         DETACH DELETE e
         """
+        delete_issue_query = """
+        MATCH (i)
+        WHERE "CanonIssue" IN labels(i) AND properties(i).world_id = $w_id
+        DETACH DELETE i
+        """
         delete_world_query = """
         MATCH (w)
         WHERE "World" IN labels(w) AND properties(w).id = $w_id
@@ -214,6 +222,7 @@ class WorldService:
         """
         with self._driver.session() as session:
             session.run(delete_entities_query, w_id=str(world_id))
+            session.run(delete_issue_query, w_id=str(world_id))
             result = session.run(delete_world_query, w_id=str(world_id))
             record = result.single()
             return bool(record and record["deleted"])
@@ -839,6 +848,7 @@ class WorldService:
                     )
                 existing.add(stance)
 
+        issues = self._sync_consistency_issues(world_id, issues)
         severity_cost = {"info": 2, "warning": 8, "error": 18}
         score = max(0, 100 - sum(severity_cost[issue.severity] for issue in issues))
         summary = self._consistency_summary(score, issues)
@@ -848,6 +858,47 @@ class WorldService:
             summary=summary,
             issues=issues,
         )
+
+    def list_consistency_issue_states(self, world_id: UUID) -> list[ConsistencyIssueStateRead] | None:
+        if not self._get_record(world_id):
+            return None
+        self.consistency_report(world_id)
+        return self._list_consistency_issue_states(world_id)
+
+    def update_consistency_issue_state(
+        self,
+        world_id: UUID,
+        issue_id: UUID,
+        data: ConsistencyIssueUpdate,
+    ) -> ConsistencyIssueStateRead | None:
+        if not self._get_record(world_id):
+            return None
+        now = datetime.now(UTC)
+        note_is_set = "note" in data.model_fields_set
+        query = """
+        MATCH (i)
+        WHERE "CanonIssue" IN labels(i)
+          AND properties(i).world_id = $w_id
+          AND properties(i).id = $issue_id
+        SET i.status = coalesce($status, i.status),
+            i.note = CASE WHEN $note_is_set THEN $note ELSE i.note END,
+            i.updated_at = $updated_at
+        RETURN properties(i) AS props
+        """
+        with self._driver.session() as session:
+            result = session.run(
+                query,
+                w_id=str(world_id),
+                issue_id=str(issue_id),
+                status=data.status,
+                note=data.note,
+                note_is_set=note_is_set,
+                updated_at=now.isoformat(),
+            )
+            record = result.single()
+            if not record:
+                return None
+            return self._consistency_issue_state_from_record(record)
 
     def get_world_context(self, world_id: UUID) -> str:
         """Retrieves existing lore/entities for a world via RAG-style DB query."""
@@ -872,6 +923,148 @@ class WorldService:
         if not entities:
             return "No previous world lore has been generated yet."
         return "\n\n".join(entities)
+
+    def _sync_consistency_issues(
+        self,
+        world_id: UUID,
+        detected_issues: list[ConsistencyIssue],
+    ) -> list[ConsistencyIssue]:
+        if not detected_issues:
+            return []
+        now = datetime.now(UTC)
+        existing_by_fingerprint = {
+            issue.fingerprint: issue for issue in self._list_consistency_issue_states(world_id)
+        }
+        active: list[ConsistencyIssue] = []
+        for issue in detected_issues:
+            fingerprint = self._consistency_issue_fingerprint(issue)
+            target_type = self._consistency_issue_target_type(issue)
+            state = existing_by_fingerprint.get(fingerprint)
+            if state:
+                status = "reopened" if state.status == "resolved" else state.status
+                state = self._update_detected_consistency_issue(
+                    issue=issue,
+                    state=state,
+                    target_type=target_type,
+                    status=status,
+                    now=now,
+                )
+            else:
+                state = self._create_consistency_issue_state(
+                    world_id=world_id,
+                    issue=issue,
+                    fingerprint=fingerprint,
+                    target_type=target_type,
+                    now=now,
+                )
+            hydrated = issue.model_copy(
+                update={
+                    "target_type": state.target_type,
+                    "issue_id": state.id,
+                    "status": state.status,
+                    "note": state.note,
+                    "first_seen": state.first_seen,
+                    "last_seen": state.last_seen,
+                }
+            )
+            if state.status in {"open", "reopened"}:
+                active.append(hydrated)
+        return active
+
+    def _create_consistency_issue_state(
+        self,
+        world_id: UUID,
+        issue: ConsistencyIssue,
+        fingerprint: str,
+        target_type: str,
+        now: datetime,
+    ) -> ConsistencyIssueStateRead:
+        issue_id = uuid4()
+        query = """
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        CREATE (w)<-[:BELONGS_TO]-(i:CanonIssue {
+            id: $issue_id, world_id: $w_id, fingerprint: $fingerprint,
+            code: $code, severity: $severity, message: $message,
+            target_type: $target_type, entity_id: $entity_id,
+            relationship_id: $relationship_id, status: "open", note: $note,
+            first_seen: $first_seen, last_seen: $last_seen, updated_at: $updated_at
+        })
+        RETURN properties(i) AS props
+        """
+        with self._driver.session() as session:
+            result = session.run(
+                query,
+                w_id=str(world_id),
+                issue_id=str(issue_id),
+                fingerprint=fingerprint,
+                code=issue.code,
+                severity=issue.severity,
+                message=issue.message,
+                target_type=target_type,
+                entity_id=str(issue.entity_id) if issue.entity_id else None,
+                relationship_id=str(issue.relationship_id) if issue.relationship_id else None,
+                note=None,
+                first_seen=now.isoformat(),
+                last_seen=now.isoformat(),
+                updated_at=now.isoformat(),
+            )
+            record = result.single()
+            return self._consistency_issue_state_from_record(record)
+
+    def _update_detected_consistency_issue(
+        self,
+        issue: ConsistencyIssue,
+        state: ConsistencyIssueStateRead,
+        target_type: str,
+        status: str,
+        now: datetime,
+    ) -> ConsistencyIssueStateRead:
+        query = """
+        MATCH (i)
+        WHERE "CanonIssue" IN labels(i) AND properties(i).id = $issue_id
+        SET i.code = $code,
+            i.severity = $severity,
+            i.message = $message,
+            i.target_type = $target_type,
+            i.entity_id = $entity_id,
+            i.relationship_id = $relationship_id,
+            i.status = $status,
+            i.last_seen = $last_seen,
+            i.updated_at = $updated_at
+        RETURN properties(i) AS props
+        """
+        with self._driver.session() as session:
+            result = session.run(
+                query,
+                issue_id=str(state.id),
+                code=issue.code,
+                severity=issue.severity,
+                message=issue.message,
+                target_type=target_type,
+                entity_id=str(issue.entity_id) if issue.entity_id else None,
+                relationship_id=str(issue.relationship_id) if issue.relationship_id else None,
+                status=status,
+                last_seen=now.isoformat(),
+                updated_at=now.isoformat(),
+            )
+            record = result.single()
+            return self._consistency_issue_state_from_record(record)
+
+    def _list_consistency_issue_states(self, world_id: UUID) -> list[ConsistencyIssueStateRead]:
+        query = """
+        MATCH (i)
+        WHERE "CanonIssue" IN labels(i) AND properties(i).world_id = $w_id
+        WITH properties(i) AS props
+        RETURN props
+        ORDER BY props.updated_at DESC
+        """
+        states = []
+        with self._driver.session() as session:
+            result = session.run(query, w_id=str(world_id))
+            for record in result:
+                states.append(self._consistency_issue_state_from_record(record))
+        return states
 
     def agentic_generate(
         self, world_id: UUID, instruction: str, save_as_type: str | None, save_as_name: str | None
@@ -1858,6 +2051,46 @@ class WorldService:
                 lines.extend([f"- Depends on: {', '.join(str(item) for item in event.depends_on)}"])
             lines.append("")
         return "\n".join(lines).strip() + "\n"
+
+    @staticmethod
+    def _consistency_issue_state_from_record(record) -> ConsistencyIssueStateRead:  # noqa: ANN001
+        props = record.get("props", record)
+        return ConsistencyIssueStateRead(
+            id=UUID(str(props["id"])),
+            world_id=UUID(str(props["world_id"])),
+            fingerprint=str(props["fingerprint"]),
+            code=str(props["code"]),
+            severity=props["severity"],
+            message=str(props["message"]),
+            target_type=props["target_type"],
+            entity_id=UUID(str(props["entity_id"])) if props.get("entity_id") else None,
+            relationship_id=UUID(str(props["relationship_id"])) if props.get("relationship_id") else None,
+            status=props["status"],
+            note=props.get("note"),
+            first_seen=datetime.fromisoformat(str(props["first_seen"])),
+            last_seen=datetime.fromisoformat(str(props["last_seen"])),
+            updated_at=datetime.fromisoformat(str(props["updated_at"])),
+        )
+
+    @staticmethod
+    def _consistency_issue_target_type(issue: ConsistencyIssue) -> str:
+        if issue.entity_id:
+            return "entity"
+        if issue.relationship_id:
+            return "relationship"
+        return "world"
+
+    @classmethod
+    def _consistency_issue_fingerprint(cls, issue: ConsistencyIssue) -> str:
+        target_type = cls._consistency_issue_target_type(issue)
+        if issue.entity_id:
+            target_id = str(issue.entity_id)
+        elif issue.relationship_id:
+            target_id = str(issue.relationship_id)
+        else:
+            target_id = " ".join(issue.message.lower().split())
+        raw = f"{issue.code}:{target_type}:{target_id}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _relationship_stance(relation_type: str) -> str | None:
