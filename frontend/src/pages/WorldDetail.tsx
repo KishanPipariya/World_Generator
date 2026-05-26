@@ -11,6 +11,7 @@ import {
   Download,
   EyeOff,
   FileText,
+  Flag,
   Link2,
   Network,
   Pencil,
@@ -23,6 +24,10 @@ import {
 } from 'lucide-react';
 import {
   applySuggestion,
+  createCampaignImpactReview,
+  createCampaignSession,
+  createFactionClock,
+  createLoreNote,
   checkPassage,
   createTimelineEvent,
   createEntity,
@@ -36,9 +41,12 @@ import {
   exportMarkdown,
   fetchConsistencyIssues,
   fetchConsistencyReport,
+  fetchCampaignSessions,
   fetchEntities,
+  fetchFactionClocks,
   fetchGraphViews,
   fetchHealth,
+  fetchLoreNotes,
   fetchPlanningBoards,
   fetchRelationships,
   fetchRevisions,
@@ -48,15 +56,18 @@ import {
   generateAgentic,
   restoreRevision,
   updateConsistencyIssue,
+  type CampaignSession,
   type ConsistencyIssueState,
   type ConsistencyIssueStatus,
   updateEntity,
   type ConsistencyReport,
   type Entity,
+  type FactionClock,
   type GenerationSuggestion,
   type GraphLayoutMode,
   type GraphView,
   type HealthStatus,
+  type LoreNote,
   type PassageCheck,
   type PlanningBoard,
   type Relationship,
@@ -77,6 +88,9 @@ const EXPORT_PRESETS = [
   ['location_gazetteer', 'Locations'],
   ['timeline_only', 'Timeline'],
   ['obsidian', 'Obsidian'],
+  ['player_handout', 'Player Handout'],
+  ['session_brief', 'Session Brief'],
+  ['dm_campaign_brief', 'DM Brief'],
 ] as const;
 const GRAPH_LAYOUTS: { value: GraphLayoutMode; label: string }[] = [
   { value: 'manual', label: 'Manual' },
@@ -113,7 +127,7 @@ const PROMPTS = [
 ];
 
 type EntityForm = Pick<Entity, 'name' | 'entity_type' | 'description' | 'structured_fields'>;
-type WorkspaceView = 'editor' | 'graph';
+type WorkspaceView = 'editor' | 'campaign' | 'graph';
 
 const blankEntity: EntityForm = {
   name: '',
@@ -142,6 +156,9 @@ const WorldDetail = () => {
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
   const [graphViews, setGraphViews] = useState<GraphView[]>([]);
   const [planningBoards, setPlanningBoards] = useState<PlanningBoard[]>([]);
+  const [campaignSessions, setCampaignSessions] = useState<CampaignSession[]>([]);
+  const [loreNotes, setLoreNotes] = useState<LoreNote[]>([]);
+  const [factionClocks, setFactionClocks] = useState<FactionClock[]>([]);
   const [revisions, setRevisions] = useState<RevisionVersion[]>([]);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [selectedRelationshipId, setSelectedRelationshipId] = useState<string | null>(null);
@@ -177,6 +194,18 @@ const WorldDetail = () => {
     boardType: 'plot_thread' as PlanningBoard['board_type'],
     cardTitle: '',
     cardLane: 'Draft',
+  });
+  const [campaignForm, setCampaignForm] = useState({
+    sessionTitle: '',
+    sessionNumber: 1,
+    recap: '',
+    noteTitle: '',
+    noteBody: '',
+    noteVisibility: 'dm_only' as LoreNote['visibility'],
+    clockTitle: '',
+    clockSegments: 6,
+    clockFilled: 0,
+    clockStakes: '',
   });
   const [passageText, setPassageText] = useState('');
   const [passageReport, setPassageReport] = useState<PassageCheck | null>(null);
@@ -305,7 +334,7 @@ const WorldDetail = () => {
 
   const loadWorkspace = async (worldId: string) => {
     setErrorMessage('');
-    const [worldData, entityData, relationshipData, suggestionData, timelineData, graphViewData, boardData, healthData] = await Promise.all([
+    const [worldData, entityData, relationshipData, suggestionData, timelineData, graphViewData, boardData, sessionData, noteData, clockData, healthData] = await Promise.all([
       fetchWorld(worldId),
       fetchEntities(worldId),
       fetchRelationships(worldId),
@@ -313,6 +342,9 @@ const WorldDetail = () => {
       fetchTimelineEvents(worldId).catch(() => []),
       fetchGraphViews(worldId).catch(() => []),
       fetchPlanningBoards(worldId).catch(() => []),
+      fetchCampaignSessions(worldId).catch(() => []),
+      fetchLoreNotes(worldId).catch(() => []),
+      fetchFactionClocks(worldId).catch(() => []),
       fetchHealth().catch(() => null),
     ]);
     setWorld(worldData);
@@ -322,6 +354,9 @@ const WorldDetail = () => {
     setTimelineEvents(timelineData);
     setGraphViews(graphViewData);
     setPlanningBoards(boardData);
+    setCampaignSessions(sessionData);
+    setLoreNotes(noteData);
+    setFactionClocks(clockData);
     setHealth(healthData);
     setSelectedEntityId((current) => current ?? entityData[0]?.id ?? null);
   };
@@ -907,6 +942,104 @@ const WorldDetail = () => {
     }
   };
 
+  const handleCreateCampaignSession = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!id || !campaignForm.sessionTitle.trim()) return;
+    setBusy(true);
+    try {
+      const session = await createCampaignSession(id, {
+        session_number: campaignForm.sessionNumber,
+        title: campaignForm.sessionTitle.trim(),
+        played_date: null,
+        in_world_date: null,
+        recap: campaignForm.recap,
+        player_actions: '',
+        consequences: '',
+        linked_entity_ids: selectedEntityId ? [selectedEntityId] : [],
+        linked_relationship_ids: selectedRelationshipId ? [selectedRelationshipId] : [],
+        linked_timeline_event_ids: [],
+      });
+      setCampaignSessions(await fetchCampaignSessions(id));
+      setCampaignForm((current) => ({
+        ...current,
+        sessionTitle: '',
+        sessionNumber: session.session_number + 1,
+        recap: '',
+      }));
+      setStatusMessage('Campaign session added.');
+    } catch {
+      setErrorMessage('Unable to create campaign session.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleCreateLoreNote = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!id || !campaignForm.noteTitle.trim()) return;
+    setBusy(true);
+    try {
+      await createLoreNote(id, {
+        title: campaignForm.noteTitle.trim(),
+        body: campaignForm.noteBody,
+        subject_type: selectedEntityId ? 'entity' : 'world',
+        subject_id: selectedEntityId,
+        visibility: campaignForm.noteVisibility,
+        truth_state: 'unknown',
+        reveal_condition: null,
+        handout_text: campaignForm.noteVisibility === 'dm_only' ? null : campaignForm.noteBody,
+      });
+      setLoreNotes(await fetchLoreNotes(id));
+      setCampaignForm((current) => ({ ...current, noteTitle: '', noteBody: '' }));
+      setStatusMessage('Lore note added.');
+    } catch {
+      setErrorMessage('Unable to create lore note.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleCreateFactionClock = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!id || !campaignForm.clockTitle.trim()) return;
+    setBusy(true);
+    try {
+      await createFactionClock(id, {
+        title: campaignForm.clockTitle.trim(),
+        linked_entity_id: selectedEntityId,
+        segments: campaignForm.clockSegments,
+        filled_segments: campaignForm.clockFilled,
+        stakes: campaignForm.clockStakes,
+        status: 'active',
+        linked_session_ids: [],
+        linked_entity_ids: selectedEntityId ? [selectedEntityId] : [],
+        linked_relationship_ids: [],
+        linked_timeline_event_ids: [],
+      });
+      setFactionClocks(await fetchFactionClocks(id));
+      setCampaignForm((current) => ({ ...current, clockTitle: '', clockFilled: 0, clockStakes: '' }));
+      setStatusMessage('Faction clock added.');
+    } catch {
+      setErrorMessage('Unable to create faction clock.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleCampaignImpactReview = async (sessionId: string) => {
+    if (!id) return;
+    setBusy(true);
+    try {
+      const suggestion = await createCampaignImpactReview(id, sessionId);
+      setSuggestions(await fetchSuggestions(id));
+      setStatusMessage(`Impact review queued: ${suggestion.suggested_name ?? 'campaign suggestion'}.`);
+    } catch {
+      setErrorMessage('Unable to create impact review.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (loading) {
     return <div className="loading-state">Loading world workspace...</div>;
   }
@@ -1242,6 +1375,14 @@ const WorldDetail = () => {
             >
               <Network size={16} />
               Graph
+            </button>
+            <button
+              className={activeView === 'campaign' ? 'active' : ''}
+              onClick={() => setActiveView('campaign')}
+              type="button"
+            >
+              <Flag size={16} />
+              Campaign
             </button>
           </div>
 
@@ -1608,6 +1749,156 @@ const WorldDetail = () => {
                   </div>
                 </section>
               )}
+            </>
+          ) : activeView === 'campaign' ? (
+            <>
+              <section className="glass content-section">
+                <div className="section-header">
+                  <Flag className="text-primary" />
+                  <h2>Campaign Sessions</h2>
+                </div>
+                <form className="planning-form" onSubmit={handleCreateCampaignSession}>
+                  <input
+                    className="form-input"
+                    min={1}
+                    type="number"
+                    value={campaignForm.sessionNumber}
+                    onChange={(event) => setCampaignForm({ ...campaignForm, sessionNumber: Number(event.target.value) })}
+                    title="Session number"
+                  />
+                  <input
+                    className="form-input"
+                    value={campaignForm.sessionTitle}
+                    onChange={(event) => setCampaignForm({ ...campaignForm, sessionTitle: event.target.value })}
+                    placeholder="Session title"
+                  />
+                  <button className="btn btn-primary" type="submit" disabled={busy}>
+                    <Plus size={16} />
+                    Add Session
+                  </button>
+                  <textarea
+                    className="form-input full-width"
+                    value={campaignForm.recap}
+                    onChange={(event) => setCampaignForm({ ...campaignForm, recap: event.target.value })}
+                    placeholder="Recap and consequences"
+                    rows={3}
+                  />
+                </form>
+                <div className="planning-board-strip">
+                  {campaignSessions.length === 0 ? (
+                    <p className="text-muted">No campaign sessions yet.</p>
+                  ) : campaignSessions.map((session) => (
+                    <article className="planning-card" key={session.id}>
+                      <small>Session {session.session_number}</small>
+                      <strong>{session.title}</strong>
+                      {session.recap && <span>{session.recap}</span>}
+                      <button className="btn btn-secondary compact-button" type="button" disabled={busy} onClick={() => handleCampaignImpactReview(session.id)}>
+                        Review Impact
+                      </button>
+                    </article>
+                  ))}
+                </div>
+              </section>
+
+              <section className="glass content-section">
+                <div className="section-header">
+                  <BookOpen className="text-secondary" />
+                  <h2>Lore Notes</h2>
+                </div>
+                <form className="planning-form" onSubmit={handleCreateLoreNote}>
+                  <input
+                    className="form-input"
+                    value={campaignForm.noteTitle}
+                    onChange={(event) => setCampaignForm({ ...campaignForm, noteTitle: event.target.value })}
+                    placeholder={selectedEntity ? `Note for ${selectedEntity.name}` : 'World note'}
+                  />
+                  <select
+                    className="form-input"
+                    value={campaignForm.noteVisibility}
+                    onChange={(event) => setCampaignForm({ ...campaignForm, noteVisibility: event.target.value as LoreNote['visibility'] })}
+                  >
+                    <option value="dm_only">DM only</option>
+                    <option value="player_visible">Player visible</option>
+                    <option value="discovered">Discovered</option>
+                    <option value="redacted">Redacted</option>
+                  </select>
+                  <button className="btn btn-primary" type="submit" disabled={busy}>
+                    <Plus size={16} />
+                    Add Note
+                  </button>
+                  <textarea
+                    className="form-input full-width"
+                    value={campaignForm.noteBody}
+                    onChange={(event) => setCampaignForm({ ...campaignForm, noteBody: event.target.value })}
+                    placeholder="Secret, rumor, reveal condition, or handout text"
+                    rows={3}
+                  />
+                </form>
+                <div className="suggestion-list">
+                  {loreNotes.slice(0, 8).map((note) => (
+                    <article className="suggestion-item" key={note.id}>
+                      <div>
+                        <strong>{note.title}</strong>
+                        <p className="text-muted">{note.visibility.replace('_', ' ')} · {note.truth_state}</p>
+                        {note.body && <pre className="lore-content compact-lore">{note.body}</pre>}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </section>
+
+              <section className="glass content-section">
+                <div className="section-header">
+                  <Clock className="text-primary" />
+                  <h2>Faction Clocks</h2>
+                </div>
+                <form className="planning-form" onSubmit={handleCreateFactionClock}>
+                  <input
+                    className="form-input"
+                    value={campaignForm.clockTitle}
+                    onChange={(event) => setCampaignForm({ ...campaignForm, clockTitle: event.target.value })}
+                    placeholder="Clock title"
+                  />
+                  <input
+                    className="form-input"
+                    min={1}
+                    max={20}
+                    type="number"
+                    value={campaignForm.clockSegments}
+                    onChange={(event) => setCampaignForm({ ...campaignForm, clockSegments: Number(event.target.value) })}
+                    title="Segments"
+                  />
+                  <input
+                    className="form-input"
+                    min={0}
+                    max={campaignForm.clockSegments}
+                    type="number"
+                    value={campaignForm.clockFilled}
+                    onChange={(event) => setCampaignForm({ ...campaignForm, clockFilled: Number(event.target.value) })}
+                    title="Filled segments"
+                  />
+                  <button className="btn btn-primary" type="submit" disabled={busy}>
+                    <Plus size={16} />
+                    Add Clock
+                  </button>
+                  <input
+                    className="form-input full-width"
+                    value={campaignForm.clockStakes}
+                    onChange={(event) => setCampaignForm({ ...campaignForm, clockStakes: event.target.value })}
+                    placeholder="Stakes if the clock fills"
+                  />
+                </form>
+                <div className="planning-board-strip">
+                  {factionClocks.map((clock) => (
+                    <article className="planning-card" key={clock.id}>
+                      <small>{clock.status}</small>
+                      <strong>{clock.title}</strong>
+                      <span>{clock.filled_segments}/{clock.segments} segments</span>
+                      {clock.stakes && <span>{clock.stakes}</span>}
+                    </article>
+                  ))}
+                </div>
+              </section>
             </>
           ) : (
             <section className="glass content-section graph-section">

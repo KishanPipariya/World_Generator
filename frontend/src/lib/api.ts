@@ -146,9 +146,58 @@ export interface PlanningBoard {
   id: string;
   world_id: string;
   name: string;
-  board_type: 'arc' | 'chapter' | 'scene' | 'plot_thread' | 'custom';
+  board_type: 'arc' | 'chapter' | 'scene' | 'plot_thread' | 'quest' | 'front' | 'session_prep' | 'custom';
   cards: PlanningCard[];
   created_at: string;
+}
+
+export interface CampaignSession {
+  id: string;
+  world_id: string;
+  session_number: number;
+  title: string;
+  played_date: string | null;
+  in_world_date: string | null;
+  recap: string;
+  player_actions: string;
+  consequences: string;
+  linked_entity_ids: string[];
+  linked_relationship_ids: string[];
+  linked_timeline_event_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LoreNote {
+  id: string;
+  world_id: string;
+  title: string;
+  body: string;
+  subject_type: 'world' | 'entity' | 'relationship' | 'timeline_event' | 'session';
+  subject_id: string | null;
+  visibility: 'dm_only' | 'player_visible' | 'discovered' | 'redacted';
+  truth_state: 'true' | 'false' | 'partial' | 'unknown';
+  reveal_condition: string | null;
+  handout_text: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FactionClock {
+  id: string;
+  world_id: string;
+  title: string;
+  linked_entity_id: string | null;
+  segments: number;
+  filled_segments: number;
+  stakes: string;
+  status: 'active' | 'paused' | 'completed' | 'failed';
+  linked_session_ids: string[];
+  linked_entity_ids: string[];
+  linked_relationship_ids: string[];
+  linked_timeline_event_ids: string[];
+  created_at: string;
+  updated_at: string;
 }
 
 export interface RevisionVersion {
@@ -396,6 +445,54 @@ export const createPlanningCard = async (
   card: Pick<PlanningCard, 'title' | 'description' | 'lane' | 'position' | 'entity_links' | 'relationship_links' | 'timeline_event_links'>,
 ): Promise<PlanningCard> => {
   const response = await api.post(`/worlds/${worldId}/planning-boards/${boardId}/cards`, card);
+  return response.data;
+};
+
+export const fetchCampaignSessions = async (worldId: string): Promise<CampaignSession[]> => {
+  const response = await api.get(`/worlds/${worldId}/campaign-sessions`);
+  return response.data.sessions;
+};
+
+export const createCampaignSession = async (
+  worldId: string,
+  session: Pick<CampaignSession, 'session_number' | 'title' | 'played_date' | 'in_world_date' | 'recap' | 'player_actions' | 'consequences' | 'linked_entity_ids' | 'linked_relationship_ids' | 'linked_timeline_event_ids'>,
+): Promise<CampaignSession> => {
+  const response = await api.post(`/worlds/${worldId}/campaign-sessions`, session);
+  return response.data;
+};
+
+export const createCampaignImpactReview = async (
+  worldId: string,
+  sessionId: string,
+  instruction?: string,
+): Promise<GenerationSuggestion> => {
+  const response = await api.post(`/worlds/${worldId}/campaign-sessions/${sessionId}/impact-review`, { instruction });
+  return response.data.suggestion;
+};
+
+export const fetchLoreNotes = async (worldId: string): Promise<LoreNote[]> => {
+  const response = await api.get(`/worlds/${worldId}/lore-notes`);
+  return response.data.notes;
+};
+
+export const createLoreNote = async (
+  worldId: string,
+  note: Pick<LoreNote, 'title' | 'body' | 'subject_type' | 'subject_id' | 'visibility' | 'truth_state' | 'reveal_condition' | 'handout_text'>,
+): Promise<LoreNote> => {
+  const response = await api.post(`/worlds/${worldId}/lore-notes`, note);
+  return response.data;
+};
+
+export const fetchFactionClocks = async (worldId: string): Promise<FactionClock[]> => {
+  const response = await api.get(`/worlds/${worldId}/faction-clocks`);
+  return response.data.clocks;
+};
+
+export const createFactionClock = async (
+  worldId: string,
+  clock: Pick<FactionClock, 'title' | 'linked_entity_id' | 'segments' | 'filled_segments' | 'stakes' | 'status' | 'linked_session_ids' | 'linked_entity_ids' | 'linked_relationship_ids' | 'linked_timeline_event_ids'>,
+): Promise<FactionClock> => {
+  const response = await api.post(`/worlds/${worldId}/faction-clocks`, clock);
   return response.data;
 };
 

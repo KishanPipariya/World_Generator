@@ -164,6 +164,67 @@ class _FakeSession:
             }
             self.db["planning_cards"][kwargs["card_id"]] = record
             return _FakeResult([{"props": record}])
+        if "CREATE (w)<-[:BELONGS_TO]-(cs:CampaignSession" in query:
+            if kwargs["w_id"] not in self.db["worlds"]:
+                return _FakeResult([])
+            record = {
+                "id": kwargs["session_id"],
+                "world_id": kwargs["w_id"],
+                "session_number": kwargs["session_number"],
+                "title": kwargs["title"],
+                "played_date": kwargs["played_date"],
+                "in_world_date": kwargs["in_world_date"],
+                "recap": kwargs["recap"],
+                "player_actions": kwargs["player_actions"],
+                "consequences": kwargs["consequences"],
+                "linked_entity_ids_json": kwargs["linked_entity_ids_json"],
+                "linked_relationship_ids_json": kwargs["linked_relationship_ids_json"],
+                "linked_timeline_event_ids_json": kwargs["linked_timeline_event_ids_json"],
+                "created_at": kwargs["created_at"],
+                "updated_at": kwargs["updated_at"],
+            }
+            self.db["campaign_sessions"][kwargs["session_id"]] = record
+            return _FakeResult([{"props": record}])
+        if "CREATE (w)<-[:BELONGS_TO]-(ln:LoreNote" in query:
+            if kwargs["w_id"] not in self.db["worlds"]:
+                return _FakeResult([])
+            record = {
+                "id": kwargs["note_id"],
+                "world_id": kwargs["w_id"],
+                "title": kwargs["title"],
+                "body": kwargs["body"],
+                "subject_type": kwargs["subject_type"],
+                "subject_id": kwargs["subject_id"],
+                "visibility": kwargs["visibility"],
+                "truth_state": kwargs["truth_state"],
+                "reveal_condition": kwargs["reveal_condition"],
+                "handout_text": kwargs["handout_text"],
+                "created_at": kwargs["created_at"],
+                "updated_at": kwargs["updated_at"],
+            }
+            self.db["lore_notes"][kwargs["note_id"]] = record
+            return _FakeResult([{"props": record}])
+        if "CREATE (w)<-[:BELONGS_TO]-(fc:FactionClock" in query:
+            if kwargs["w_id"] not in self.db["worlds"]:
+                return _FakeResult([])
+            record = {
+                "id": kwargs["clock_id"],
+                "world_id": kwargs["w_id"],
+                "title": kwargs["title"],
+                "linked_entity_id": kwargs["linked_entity_id"],
+                "segments": kwargs["segments"],
+                "filled_segments": kwargs["filled_segments"],
+                "stakes": kwargs["stakes"],
+                "status": kwargs["status"],
+                "linked_session_ids_json": kwargs["linked_session_ids_json"],
+                "linked_entity_ids_json": kwargs["linked_entity_ids_json"],
+                "linked_relationship_ids_json": kwargs["linked_relationship_ids_json"],
+                "linked_timeline_event_ids_json": kwargs["linked_timeline_event_ids_json"],
+                "created_at": kwargs["created_at"],
+                "updated_at": kwargs["updated_at"],
+            }
+            self.db["faction_clocks"][kwargs["clock_id"]] = record
+            return _FakeResult([{"props": record}])
         if "CREATE (r:RevisionVersion" in query:
             record = {
                 "id": kwargs["revision_id"],
@@ -269,6 +330,61 @@ class _FakeSession:
                 record["updated_at"] = kwargs["updated_at"]
                 return _FakeResult([{"props": record}])
             return _FakeResult([])
+        if "SET cs.session_number" in query:
+            record = self.db["campaign_sessions"].get(kwargs["session_id"])
+            if record and record["world_id"] == kwargs["w_id"]:
+                for field in (
+                    "session_number",
+                    "title",
+                    "played_date",
+                    "in_world_date",
+                    "recap",
+                    "player_actions",
+                    "consequences",
+                    "linked_entity_ids_json",
+                    "linked_relationship_ids_json",
+                    "linked_timeline_event_ids_json",
+                    "updated_at",
+                ):
+                    record[field] = kwargs[field]
+                return _FakeResult([{"props": record}])
+            return _FakeResult([])
+        if "SET ln.title" in query:
+            record = self.db["lore_notes"].get(kwargs["note_id"])
+            if record and record["world_id"] == kwargs["w_id"]:
+                for field in (
+                    "title",
+                    "body",
+                    "subject_type",
+                    "subject_id",
+                    "visibility",
+                    "truth_state",
+                    "reveal_condition",
+                    "handout_text",
+                    "updated_at",
+                ):
+                    record[field] = kwargs[field]
+                return _FakeResult([{"props": record}])
+            return _FakeResult([])
+        if "SET fc.title" in query:
+            record = self.db["faction_clocks"].get(kwargs["clock_id"])
+            if record and record["world_id"] == kwargs["w_id"]:
+                for field in (
+                    "title",
+                    "linked_entity_id",
+                    "segments",
+                    "filled_segments",
+                    "stakes",
+                    "status",
+                    "linked_session_ids_json",
+                    "linked_entity_ids_json",
+                    "linked_relationship_ids_json",
+                    "linked_timeline_event_ids_json",
+                    "updated_at",
+                ):
+                    record[field] = kwargs[field]
+                return _FakeResult([{"props": record}])
+            return _FakeResult([])
         if "DETACH DELETE w" in query:
             world = self.db["worlds"].pop(kwargs["w_id"], None)
             if not world:
@@ -329,6 +445,24 @@ class _FakeSession:
                 del self.db["drafts"][kwargs["draft_id"]]
                 return _FakeResult([{"deleted": 1}])
             return _FakeResult([{"deleted": 0}])
+        if "DETACH DELETE cs" in query:
+            record = self.db["campaign_sessions"].get(kwargs["node_id"])
+            if record and record["world_id"] == kwargs["w_id"]:
+                del self.db["campaign_sessions"][kwargs["node_id"]]
+                return _FakeResult([{"deleted": 1}])
+            return _FakeResult([{"deleted": 0}])
+        if "DETACH DELETE ln" in query:
+            record = self.db["lore_notes"].get(kwargs["node_id"])
+            if record and record["world_id"] == kwargs["w_id"]:
+                del self.db["lore_notes"][kwargs["node_id"]]
+                return _FakeResult([{"deleted": 1}])
+            return _FakeResult([{"deleted": 0}])
+        if "DETACH DELETE fc" in query:
+            record = self.db["faction_clocks"].get(kwargs["node_id"])
+            if record and record["world_id"] == kwargs["w_id"]:
+                del self.db["faction_clocks"][kwargs["node_id"]]
+                return _FakeResult([{"deleted": 1}])
+            return _FakeResult([{"deleted": 0}])
         if "id" in kwargs and "MATCH (w)<-[belongs]-(e)" in query:
             return _FakeResult(
                 [v for v in self.db["entities"].values() if v["world_id"] == kwargs["id"]]
@@ -387,6 +521,27 @@ class _FakeSession:
                     if v["world_id"] == kwargs["w_id"] and v["board_id"] == kwargs["board_id"]
                 ]
             )
+        if '"CampaignSession" IN labels(cs)' in query:
+            if "session_id" in kwargs:
+                record = self.db["campaign_sessions"].get(kwargs["session_id"])
+                return _FakeResult([{"props": record}] if record and record["world_id"] == kwargs["w_id"] else [])
+            return _FakeResult(
+                [{"props": v} for v in self.db["campaign_sessions"].values() if v["world_id"] == kwargs["w_id"]]
+            )
+        if '"LoreNote" IN labels(ln)' in query:
+            if "note_id" in kwargs:
+                record = self.db["lore_notes"].get(kwargs["note_id"])
+                return _FakeResult([{"props": record}] if record and record["world_id"] == kwargs["w_id"] else [])
+            return _FakeResult(
+                [{"props": v} for v in self.db["lore_notes"].values() if v["world_id"] == kwargs["w_id"]]
+            )
+        if '"FactionClock" IN labels(fc)' in query:
+            if "clock_id" in kwargs:
+                record = self.db["faction_clocks"].get(kwargs["clock_id"])
+                return _FakeResult([{"props": record}] if record and record["world_id"] == kwargs["w_id"] else [])
+            return _FakeResult(
+                [{"props": v} for v in self.db["faction_clocks"].values() if v["world_id"] == kwargs["w_id"]]
+            )
         if '"RevisionVersion" IN labels' in query:
             return _FakeResult(
                 [
@@ -414,6 +569,9 @@ class _FakeDriver:
             "graph_views": {},
             "planning_boards": {},
             "planning_cards": {},
+            "campaign_sessions": {},
+            "lore_notes": {},
+            "faction_clocks": {},
             "drafts": {},
         }
         
@@ -727,6 +885,93 @@ def test_timeline_revisions_passage_and_export_presets(client: TestClient) -> No
     assert exported.status_code == 200
     assert exported.json()["preset"] == "timeline_only"
     assert "# Roadmap Timeline" in exported.json()["content"]
+
+
+def test_campaign_resources_exports_and_impact_review(client: TestClient) -> None:
+    world = client.post("/worlds", json={"title": "Campaign Desk"}).json()
+    wid = world["id"]
+    entity = client.post(
+        f"/worlds/{wid}/entities",
+        json={"name": "Red Abbey", "entity_type": "Location", "description": "A monastery under siege."},
+    ).json()
+
+    session = client.post(
+        f"/worlds/{wid}/campaign-sessions",
+        json={
+            "session_number": 1,
+            "title": "Ash at the Gate",
+            "recap": "The party exposed the false prior.",
+            "player_actions": "Spared a captured scout.",
+            "consequences": "The abbey faction splinters.",
+            "linked_entity_ids": [entity["id"]],
+        },
+    )
+    assert session.status_code == 201
+    sid = session.json()["id"]
+    assert client.get(f"/worlds/{wid}/campaign-sessions").json()["sessions"][0]["title"] == "Ash at the Gate"
+
+    note = client.post(
+        f"/worlds/{wid}/lore-notes",
+        json={
+            "title": "Prior's Secret",
+            "body": "The prior serves the buried bell.",
+            "subject_type": "entity",
+            "subject_id": entity["id"],
+            "visibility": "dm_only",
+            "truth_state": "true",
+            "handout_text": "The prior is afraid of the old crypt.",
+        },
+    )
+    assert note.status_code == 201
+    visible_note = client.post(
+        f"/worlds/{wid}/lore-notes",
+        json={
+            "title": "Abbey Rumor",
+            "body": "Novices hear bells under the floor.",
+            "visibility": "discovered",
+            "truth_state": "partial",
+        },
+    )
+    assert visible_note.status_code == 201
+
+    clock = client.post(
+        f"/worlds/{wid}/faction-clocks",
+        json={
+            "title": "Abbey Coup",
+            "linked_entity_id": entity["id"],
+            "segments": 6,
+            "filled_segments": 2,
+            "stakes": "The abbey changes hands.",
+            "linked_session_ids": [sid],
+        },
+    )
+    assert clock.status_code == 201
+    assert client.get(f"/worlds/{wid}/faction-clocks").json()["clocks"][0]["filled_segments"] == 2
+
+    player_export = client.get(f"/worlds/{wid}/export/markdown", params={"preset": "player_handout"})
+    assert player_export.status_code == 200
+    assert "Abbey Rumor" in player_export.json()["content"]
+    assert "Prior's Secret" not in player_export.json()["content"]
+
+    dm_export = client.get(f"/worlds/{wid}/export/markdown", params={"preset": "dm_campaign_brief"})
+    assert dm_export.status_code == 200
+    assert "Prior's Secret" in dm_export.json()["content"]
+    assert "Abbey Coup" in dm_export.json()["content"]
+
+    impact = client.post(f"/worlds/{wid}/campaign-sessions/{sid}/impact-review", json={})
+    assert impact.status_code == 200
+    assert impact.json()["suggestion"]["status"] == "pending"
+    assert "false prior" in impact.json()["suggestion"]["content"]
+
+    bad = client.post(
+        f"/worlds/{wid}/campaign-sessions",
+        json={
+            "session_number": 2,
+            "title": "Bad Link",
+            "linked_entity_ids": ["00000000-0000-0000-0000-000000000099"],
+        },
+    )
+    assert bad.status_code == 404
 
 
 def test_saved_draft_crud_and_check_history(client: TestClient) -> None:

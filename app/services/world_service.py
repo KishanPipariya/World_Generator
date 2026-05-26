@@ -10,6 +10,9 @@ from uuid import UUID, uuid4
 from neo4j import Driver
 
 from app.schemas.world import (
+    CampaignSessionCreate,
+    CampaignSessionRead,
+    CampaignSessionUpdate,
     ConsistencyIssue,
     ConsistencyIssueStateRead,
     ConsistencyIssueUpdate,
@@ -22,9 +25,15 @@ from app.schemas.world import (
     EntityRead,
     EntityUpdate,
     ExportPreset,
+    FactionClockCreate,
+    FactionClockRead,
+    FactionClockUpdate,
     GenerationSuggestionRead,
     GraphViewCreate,
     GraphViewRead,
+    LoreNoteCreate,
+    LoreNoteRead,
+    LoreNoteUpdate,
     PassageCheckIssue,
     PassageCheckResponse,
     PlanningBoardCreate,
@@ -511,6 +520,20 @@ class WorldService:
         entities = self.list_entities(world_id) or []
         relationships = self.list_relationships(world_id) or []
         timeline = self.list_timeline_events(world_id) or []
+
+        if preset == "player_handout":
+            lore_notes = self.list_lore_notes(world_id) or []
+            return self._campaign_player_handout_markdown(rec.title, entities, lore_notes)
+        if preset == "session_brief":
+            sessions = self.list_campaign_sessions(world_id) or []
+            lore_notes = self.list_lore_notes(world_id) or []
+            clocks = self.list_faction_clocks(world_id) or []
+            return self._campaign_session_brief_markdown(rec.title, sessions, lore_notes, clocks)
+        if preset == "dm_campaign_brief":
+            sessions = self.list_campaign_sessions(world_id) or []
+            lore_notes = self.list_lore_notes(world_id) or []
+            clocks = self.list_faction_clocks(world_id) or []
+            return self._campaign_dm_brief_markdown(rec.title, sessions, lore_notes, clocks)
 
         entity_types_by_preset = {
             "character_dossier": {"Character"},
@@ -1423,6 +1446,345 @@ class WorldService:
             result = session.run(query, w_id=str(world_id), board_id=str(board_id))
             return [self._planning_card_from_record(record) for record in result]
 
+    def create_campaign_session(
+        self, world_id: UUID, data: CampaignSessionCreate
+    ) -> CampaignSessionRead:
+        if not self._get_record(world_id):
+            raise ValueError("World not found")
+        self._validate_campaign_links(world_id, data)
+        session_id = uuid4()
+        now = datetime.now(UTC)
+        query = """
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        CREATE (w)<-[:BELONGS_TO]-(cs:CampaignSession {
+            id: $session_id, world_id: $w_id, session_number: $session_number,
+            title: $title, played_date: $played_date, in_world_date: $in_world_date,
+            recap: $recap, player_actions: $player_actions, consequences: $consequences,
+            linked_entity_ids_json: $linked_entity_ids_json,
+            linked_relationship_ids_json: $linked_relationship_ids_json,
+            linked_timeline_event_ids_json: $linked_timeline_event_ids_json,
+            created_at: $created_at, updated_at: $updated_at
+        })
+        RETURN properties(cs) AS props
+        """
+        with self._driver.session() as session:
+            result = session.run(
+                query,
+                w_id=str(world_id),
+                session_id=str(session_id),
+                session_number=data.session_number,
+                title=data.title,
+                played_date=data.played_date,
+                in_world_date=data.in_world_date,
+                recap=data.recap,
+                player_actions=data.player_actions,
+                consequences=data.consequences,
+                linked_entity_ids_json=self._uuid_list_json(data.linked_entity_ids),
+                linked_relationship_ids_json=self._uuid_list_json(data.linked_relationship_ids),
+                linked_timeline_event_ids_json=self._uuid_list_json(data.linked_timeline_event_ids),
+                created_at=now.isoformat(),
+                updated_at=now.isoformat(),
+            )
+            return self._campaign_session_from_record(result.single())
+
+    def list_campaign_sessions(self, world_id: UUID) -> list[CampaignSessionRead] | None:
+        if not self._get_record(world_id):
+            return None
+        query = """
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        MATCH (w)<-[belongs]-(cs)
+        WHERE type(belongs) = "BELONGS_TO" AND "CampaignSession" IN labels(cs)
+        RETURN properties(cs) AS props
+        ORDER BY props.session_number DESC, props.created_at DESC
+        """
+        with self._driver.session() as session:
+            return [self._campaign_session_from_record(record) for record in session.run(query, w_id=str(world_id))]
+
+    def update_campaign_session(
+        self, world_id: UUID, session_id: UUID, data: CampaignSessionUpdate
+    ) -> CampaignSessionRead | None:
+        if not self._get_record(world_id):
+            return None
+        current = self._get_campaign_session(world_id, session_id)
+        if not current:
+            return None
+        merged = CampaignSessionCreate(**(current.model_dump() | data.model_dump(exclude_unset=True)))
+        self._validate_campaign_links(world_id, merged)
+        now = datetime.now(UTC)
+        query = """
+        MATCH (cs)
+        WHERE "CampaignSession" IN labels(cs)
+          AND properties(cs).world_id = $w_id
+          AND properties(cs).id = $session_id
+        SET cs.session_number = $session_number,
+            cs.title = $title,
+            cs.played_date = $played_date,
+            cs.in_world_date = $in_world_date,
+            cs.recap = $recap,
+            cs.player_actions = $player_actions,
+            cs.consequences = $consequences,
+            cs.linked_entity_ids_json = $linked_entity_ids_json,
+            cs.linked_relationship_ids_json = $linked_relationship_ids_json,
+            cs.linked_timeline_event_ids_json = $linked_timeline_event_ids_json,
+            cs.updated_at = $updated_at
+        RETURN properties(cs) AS props
+        """
+        with self._driver.session() as session:
+            result = session.run(
+                query,
+                w_id=str(world_id),
+                session_id=str(session_id),
+                session_number=merged.session_number,
+                title=merged.title,
+                played_date=merged.played_date,
+                in_world_date=merged.in_world_date,
+                recap=merged.recap,
+                player_actions=merged.player_actions,
+                consequences=merged.consequences,
+                linked_entity_ids_json=self._uuid_list_json(merged.linked_entity_ids),
+                linked_relationship_ids_json=self._uuid_list_json(merged.linked_relationship_ids),
+                linked_timeline_event_ids_json=self._uuid_list_json(merged.linked_timeline_event_ids),
+                updated_at=now.isoformat(),
+            )
+            record = result.single()
+            return self._campaign_session_from_record(record) if record else None
+
+    def delete_campaign_session(self, world_id: UUID, session_id: UUID) -> bool | None:
+        if not self._get_record(world_id):
+            return None
+        return self._delete_campaign_node(world_id, session_id, "CampaignSession", "cs")
+
+    def create_lore_note(self, world_id: UUID, data: LoreNoteCreate) -> LoreNoteRead:
+        if not self._get_record(world_id):
+            raise ValueError("World not found")
+        self._validate_lore_subject(world_id, data.subject_type, data.subject_id)
+        note_id = uuid4()
+        now = datetime.now(UTC)
+        query = """
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        CREATE (w)<-[:BELONGS_TO]-(ln:LoreNote {
+            id: $note_id, world_id: $w_id, title: $title, body: $body,
+            subject_type: $subject_type, subject_id: $subject_id,
+            visibility: $visibility, truth_state: $truth_state,
+            reveal_condition: $reveal_condition, handout_text: $handout_text,
+            created_at: $created_at, updated_at: $updated_at
+        })
+        RETURN properties(ln) AS props
+        """
+        with self._driver.session() as session:
+            result = session.run(
+                query,
+                w_id=str(world_id),
+                note_id=str(note_id),
+                title=data.title,
+                body=data.body,
+                subject_type=data.subject_type,
+                subject_id=str(data.subject_id) if data.subject_id else None,
+                visibility=data.visibility,
+                truth_state=data.truth_state,
+                reveal_condition=data.reveal_condition,
+                handout_text=data.handout_text,
+                created_at=now.isoformat(),
+                updated_at=now.isoformat(),
+            )
+            return self._lore_note_from_record(result.single())
+
+    def list_lore_notes(self, world_id: UUID) -> list[LoreNoteRead] | None:
+        if not self._get_record(world_id):
+            return None
+        query = """
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        MATCH (w)<-[belongs]-(ln)
+        WHERE type(belongs) = "BELONGS_TO" AND "LoreNote" IN labels(ln)
+        RETURN properties(ln) AS props
+        ORDER BY props.updated_at DESC, props.created_at DESC
+        """
+        with self._driver.session() as session:
+            return [self._lore_note_from_record(record) for record in session.run(query, w_id=str(world_id))]
+
+    def update_lore_note(
+        self, world_id: UUID, note_id: UUID, data: LoreNoteUpdate
+    ) -> LoreNoteRead | None:
+        if not self._get_record(world_id):
+            return None
+        current = self._get_lore_note(world_id, note_id)
+        if not current:
+            return None
+        merged = LoreNoteCreate(**(current.model_dump() | data.model_dump(exclude_unset=True)))
+        self._validate_lore_subject(world_id, merged.subject_type, merged.subject_id)
+        now = datetime.now(UTC)
+        query = """
+        MATCH (ln)
+        WHERE "LoreNote" IN labels(ln)
+          AND properties(ln).world_id = $w_id
+          AND properties(ln).id = $note_id
+        SET ln.title = $title,
+            ln.body = $body,
+            ln.subject_type = $subject_type,
+            ln.subject_id = $subject_id,
+            ln.visibility = $visibility,
+            ln.truth_state = $truth_state,
+            ln.reveal_condition = $reveal_condition,
+            ln.handout_text = $handout_text,
+            ln.updated_at = $updated_at
+        RETURN properties(ln) AS props
+        """
+        with self._driver.session() as session:
+            result = session.run(
+                query,
+                w_id=str(world_id),
+                note_id=str(note_id),
+                title=merged.title,
+                body=merged.body,
+                subject_type=merged.subject_type,
+                subject_id=str(merged.subject_id) if merged.subject_id else None,
+                visibility=merged.visibility,
+                truth_state=merged.truth_state,
+                reveal_condition=merged.reveal_condition,
+                handout_text=merged.handout_text,
+                updated_at=now.isoformat(),
+            )
+            record = result.single()
+            return self._lore_note_from_record(record) if record else None
+
+    def delete_lore_note(self, world_id: UUID, note_id: UUID) -> bool | None:
+        if not self._get_record(world_id):
+            return None
+        return self._delete_campaign_node(world_id, note_id, "LoreNote", "ln")
+
+    def create_faction_clock(self, world_id: UUID, data: FactionClockCreate) -> FactionClockRead:
+        if not self._get_record(world_id):
+            raise ValueError("World not found")
+        self._validate_clock_links(world_id, data)
+        clock_id = uuid4()
+        now = datetime.now(UTC)
+        query = """
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        CREATE (w)<-[:BELONGS_TO]-(fc:FactionClock {
+            id: $clock_id, world_id: $w_id, title: $title,
+            linked_entity_id: $linked_entity_id, segments: $segments,
+            filled_segments: $filled_segments, stakes: $stakes, status: $status,
+            linked_session_ids_json: $linked_session_ids_json,
+            linked_entity_ids_json: $linked_entity_ids_json,
+            linked_relationship_ids_json: $linked_relationship_ids_json,
+            linked_timeline_event_ids_json: $linked_timeline_event_ids_json,
+            created_at: $created_at, updated_at: $updated_at
+        })
+        RETURN properties(fc) AS props
+        """
+        with self._driver.session() as session:
+            result = session.run(
+                query,
+                w_id=str(world_id),
+                clock_id=str(clock_id),
+                title=data.title,
+                linked_entity_id=str(data.linked_entity_id) if data.linked_entity_id else None,
+                segments=data.segments,
+                filled_segments=data.filled_segments,
+                stakes=data.stakes,
+                status=data.status,
+                linked_session_ids_json=self._uuid_list_json(data.linked_session_ids),
+                linked_entity_ids_json=self._uuid_list_json(data.linked_entity_ids),
+                linked_relationship_ids_json=self._uuid_list_json(data.linked_relationship_ids),
+                linked_timeline_event_ids_json=self._uuid_list_json(data.linked_timeline_event_ids),
+                created_at=now.isoformat(),
+                updated_at=now.isoformat(),
+            )
+            return self._faction_clock_from_record(result.single())
+
+    def list_faction_clocks(self, world_id: UUID) -> list[FactionClockRead] | None:
+        if not self._get_record(world_id):
+            return None
+        query = """
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        MATCH (w)<-[belongs]-(fc)
+        WHERE type(belongs) = "BELONGS_TO" AND "FactionClock" IN labels(fc)
+        RETURN properties(fc) AS props
+        ORDER BY props.status ASC, props.updated_at DESC
+        """
+        with self._driver.session() as session:
+            return [self._faction_clock_from_record(record) for record in session.run(query, w_id=str(world_id))]
+
+    def update_faction_clock(
+        self, world_id: UUID, clock_id: UUID, data: FactionClockUpdate
+    ) -> FactionClockRead | None:
+        if not self._get_record(world_id):
+            return None
+        current = self._get_faction_clock(world_id, clock_id)
+        if not current:
+            return None
+        merged = FactionClockCreate(**(current.model_dump() | data.model_dump(exclude_unset=True)))
+        self._validate_clock_links(world_id, merged)
+        now = datetime.now(UTC)
+        query = """
+        MATCH (fc)
+        WHERE "FactionClock" IN labels(fc)
+          AND properties(fc).world_id = $w_id
+          AND properties(fc).id = $clock_id
+        SET fc.title = $title,
+            fc.linked_entity_id = $linked_entity_id,
+            fc.segments = $segments,
+            fc.filled_segments = $filled_segments,
+            fc.stakes = $stakes,
+            fc.status = $status,
+            fc.linked_session_ids_json = $linked_session_ids_json,
+            fc.linked_entity_ids_json = $linked_entity_ids_json,
+            fc.linked_relationship_ids_json = $linked_relationship_ids_json,
+            fc.linked_timeline_event_ids_json = $linked_timeline_event_ids_json,
+            fc.updated_at = $updated_at
+        RETURN properties(fc) AS props
+        """
+        with self._driver.session() as session:
+            result = session.run(
+                query,
+                w_id=str(world_id),
+                clock_id=str(clock_id),
+                title=merged.title,
+                linked_entity_id=str(merged.linked_entity_id) if merged.linked_entity_id else None,
+                segments=merged.segments,
+                filled_segments=merged.filled_segments,
+                stakes=merged.stakes,
+                status=merged.status,
+                linked_session_ids_json=self._uuid_list_json(merged.linked_session_ids),
+                linked_entity_ids_json=self._uuid_list_json(merged.linked_entity_ids),
+                linked_relationship_ids_json=self._uuid_list_json(merged.linked_relationship_ids),
+                linked_timeline_event_ids_json=self._uuid_list_json(merged.linked_timeline_event_ids),
+                updated_at=now.isoformat(),
+            )
+            record = result.single()
+            return self._faction_clock_from_record(record) if record else None
+
+    def delete_faction_clock(self, world_id: UUID, clock_id: UUID) -> bool | None:
+        if not self._get_record(world_id):
+            return None
+        return self._delete_campaign_node(world_id, clock_id, "FactionClock", "fc")
+
+    def create_session_impact_review(
+        self, world_id: UUID, session_id: UUID, instruction: str | None = None
+    ) -> GenerationSuggestionRead | None:
+        session = self._get_campaign_session(world_id, session_id)
+        if not session:
+            return None
+        content = (
+            f"Session {session.session_number}: {session.title}\n\n"
+            f"Recap:\n{session.recap or 'No recap recorded.'}\n\n"
+            f"Player actions:\n{session.player_actions or 'No player actions recorded.'}\n\n"
+            f"Consequences to review:\n{session.consequences or 'No consequences recorded.'}"
+        )
+        return self.create_generation_suggestion(
+            world_id=world_id,
+            instruction=instruction or f"Review campaign impact for session {session.session_number}",
+            content=content,
+            suggested_name=f"Session {session.session_number} Impact Review",
+            suggested_type="Event",
+        )
+
     def list_revisions(
         self, world_id: UUID, entity_id: UUID | None = None
     ) -> list[RevisionVersionRead] | None:
@@ -1766,6 +2128,106 @@ class WorldService:
             )
             return self._revision_from_record(result.single())
 
+    def _get_campaign_session(self, world_id: UUID, session_id: UUID) -> CampaignSessionRead | None:
+        query = """
+        MATCH (cs)
+        WHERE "CampaignSession" IN labels(cs)
+          AND properties(cs).world_id = $w_id
+          AND properties(cs).id = $session_id
+        RETURN properties(cs) AS props
+        """
+        with self._driver.session() as session:
+            record = session.run(query, w_id=str(world_id), session_id=str(session_id)).single()
+            return self._campaign_session_from_record(record) if record else None
+
+    def _get_lore_note(self, world_id: UUID, note_id: UUID) -> LoreNoteRead | None:
+        query = """
+        MATCH (ln)
+        WHERE "LoreNote" IN labels(ln)
+          AND properties(ln).world_id = $w_id
+          AND properties(ln).id = $note_id
+        RETURN properties(ln) AS props
+        """
+        with self._driver.session() as session:
+            record = session.run(query, w_id=str(world_id), note_id=str(note_id)).single()
+            return self._lore_note_from_record(record) if record else None
+
+    def _get_faction_clock(self, world_id: UUID, clock_id: UUID) -> FactionClockRead | None:
+        query = """
+        MATCH (fc)
+        WHERE "FactionClock" IN labels(fc)
+          AND properties(fc).world_id = $w_id
+          AND properties(fc).id = $clock_id
+        RETURN properties(fc) AS props
+        """
+        with self._driver.session() as session:
+            record = session.run(query, w_id=str(world_id), clock_id=str(clock_id)).single()
+            return self._faction_clock_from_record(record) if record else None
+
+    def _delete_campaign_node(self, world_id: UUID, node_id: UUID, label: str, alias: str) -> bool:
+        query = f"""
+        MATCH ({alias})
+        WHERE "{label}" IN labels({alias})
+          AND properties({alias}).world_id = $w_id
+          AND properties({alias}).id = $node_id
+        DETACH DELETE {alias}
+        RETURN count({alias}) AS deleted
+        """
+        with self._driver.session() as session:
+            record = session.run(query, w_id=str(world_id), node_id=str(node_id)).single()
+            return bool(record and record["deleted"])
+
+    def _validate_campaign_links(self, world_id: UUID, data: CampaignSessionCreate) -> None:
+        self._require_entity_ids(world_id, data.linked_entity_ids)
+        self._require_relationship_ids(world_id, data.linked_relationship_ids)
+        self._require_timeline_event_ids(world_id, data.linked_timeline_event_ids)
+
+    def _validate_clock_links(self, world_id: UUID, data: FactionClockCreate) -> None:
+        if data.linked_entity_id:
+            self._require_entity_ids(world_id, [data.linked_entity_id])
+        self._require_session_ids(world_id, data.linked_session_ids)
+        self._require_entity_ids(world_id, data.linked_entity_ids)
+        self._require_relationship_ids(world_id, data.linked_relationship_ids)
+        self._require_timeline_event_ids(world_id, data.linked_timeline_event_ids)
+        if data.filled_segments > data.segments:
+            raise ValueError("Filled segments cannot exceed segments")
+
+    def _validate_lore_subject(
+        self, world_id: UUID, subject_type: str, subject_id: UUID | None
+    ) -> None:
+        if subject_type == "world":
+            return
+        if not subject_id:
+            raise ValueError("Subject id is required")
+        if subject_type == "entity":
+            self._require_entity_ids(world_id, [subject_id])
+        elif subject_type == "relationship":
+            self._require_relationship_ids(world_id, [subject_id])
+        elif subject_type == "timeline_event":
+            self._require_timeline_event_ids(world_id, [subject_id])
+        elif subject_type == "session":
+            self._require_session_ids(world_id, [subject_id])
+
+    def _require_entity_ids(self, world_id: UUID, ids: list[UUID]) -> None:
+        for item in ids:
+            if not self.get_entity(world_id, item):
+                raise ValueError("Invalid linked entity id")
+
+    def _require_relationship_ids(self, world_id: UUID, ids: list[UUID]) -> None:
+        existing = {relationship.id for relationship in (self.list_relationships(world_id) or [])}
+        if any(item not in existing for item in ids):
+            raise ValueError("Invalid linked relationship id")
+
+    def _require_timeline_event_ids(self, world_id: UUID, ids: list[UUID]) -> None:
+        existing = {event.id for event in (self.list_timeline_events(world_id) or [])}
+        if any(item not in existing for item in ids):
+            raise ValueError("Invalid linked timeline event id")
+
+    def _require_session_ids(self, world_id: UUID, ids: list[UUID]) -> None:
+        existing = {session.id for session in (self.list_campaign_sessions(world_id) or [])}
+        if any(item not in existing for item in ids):
+            raise ValueError("Invalid linked session id")
+
     @staticmethod
     def _entity_from_record(record) -> EntityRead:  # noqa: ANN001
         props = record.get("props", record)
@@ -1910,6 +2372,64 @@ class WorldService:
         )
 
     @staticmethod
+    def _campaign_session_from_record(record) -> CampaignSessionRead:  # noqa: ANN001
+        props = record.get("props", record)
+        return CampaignSessionRead(
+            id=UUID(props["id"]),
+            world_id=UUID(props["world_id"]),
+            session_number=int(props["session_number"]),
+            title=props["title"],
+            played_date=props.get("played_date"),
+            in_world_date=props.get("in_world_date"),
+            recap=props.get("recap") or "",
+            player_actions=props.get("player_actions") or "",
+            consequences=props.get("consequences") or "",
+            linked_entity_ids=WorldService._decode_uuid_list(props.get("linked_entity_ids_json")),
+            linked_relationship_ids=WorldService._decode_uuid_list(props.get("linked_relationship_ids_json")),
+            linked_timeline_event_ids=WorldService._decode_uuid_list(props.get("linked_timeline_event_ids_json")),
+            created_at=datetime.fromisoformat(props["created_at"]),
+            updated_at=datetime.fromisoformat(props.get("updated_at") or props["created_at"]),
+        )
+
+    @staticmethod
+    def _lore_note_from_record(record) -> LoreNoteRead:  # noqa: ANN001
+        props = record.get("props", record)
+        return LoreNoteRead(
+            id=UUID(props["id"]),
+            world_id=UUID(props["world_id"]),
+            title=props["title"],
+            body=props.get("body") or "",
+            subject_type=props.get("subject_type", "world"),
+            subject_id=UUID(props["subject_id"]) if props.get("subject_id") else None,
+            visibility=props.get("visibility", "dm_only"),
+            truth_state=props.get("truth_state", "unknown"),
+            reveal_condition=props.get("reveal_condition"),
+            handout_text=props.get("handout_text"),
+            created_at=datetime.fromisoformat(props["created_at"]),
+            updated_at=datetime.fromisoformat(props.get("updated_at") or props["created_at"]),
+        )
+
+    @staticmethod
+    def _faction_clock_from_record(record) -> FactionClockRead:  # noqa: ANN001
+        props = record.get("props", record)
+        return FactionClockRead(
+            id=UUID(props["id"]),
+            world_id=UUID(props["world_id"]),
+            title=props["title"],
+            linked_entity_id=UUID(props["linked_entity_id"]) if props.get("linked_entity_id") else None,
+            segments=int(props.get("segments") or 6),
+            filled_segments=int(props.get("filled_segments") or 0),
+            stakes=props.get("stakes") or "",
+            status=props.get("status", "active"),
+            linked_session_ids=WorldService._decode_uuid_list(props.get("linked_session_ids_json")),
+            linked_entity_ids=WorldService._decode_uuid_list(props.get("linked_entity_ids_json")),
+            linked_relationship_ids=WorldService._decode_uuid_list(props.get("linked_relationship_ids_json")),
+            linked_timeline_event_ids=WorldService._decode_uuid_list(props.get("linked_timeline_event_ids_json")),
+            created_at=datetime.fromisoformat(props["created_at"]),
+            updated_at=datetime.fromisoformat(props.get("updated_at") or props["created_at"]),
+        )
+
+    @staticmethod
     def _revision_from_record(record) -> RevisionVersionRead:  # noqa: ANN001
         props = record.get("props", record)
         return RevisionVersionRead(
@@ -1992,6 +2512,22 @@ class WorldService:
         return {str(key): str(value) for key, value in parsed.items()}
 
     @staticmethod
+    def _uuid_list_json(items: list[UUID]) -> str:
+        return json.dumps([str(item) for item in items])
+
+    @staticmethod
+    def _decode_uuid_list(raw: object) -> list[UUID]:
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(str(raw))
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(parsed, list):
+            return []
+        return [UUID(str(item)) for item in parsed]
+
+    @staticmethod
     def _decode_draft_check_history(raw: object) -> list[DraftCheckHistoryItem]:
         if not raw:
             return []
@@ -2027,6 +2563,9 @@ class WorldService:
             "location_gazetteer": "Location gazetteer export",
             "timeline_only": "Timeline export",
             "obsidian": "Obsidian-friendly world bible export",
+            "player_handout": "Player-safe campaign handout",
+            "session_brief": "Next-session campaign brief",
+            "dm_campaign_brief": "Full DM campaign brief",
         }
         return labels.get(preset, "World bible export")
 
@@ -2049,6 +2588,103 @@ class WorldService:
                 )
             if event.depends_on:
                 lines.extend([f"- Depends on: {', '.join(str(item) for item in event.depends_on)}"])
+            lines.append("")
+        return "\n".join(lines).strip() + "\n"
+
+    @staticmethod
+    def _campaign_player_handout_markdown(
+        title: str, entities: list[EntityRead], notes: list[LoreNoteRead]
+    ) -> str:
+        visible_notes = [
+            note for note in notes if note.visibility in {"player_visible", "discovered", "redacted"}
+        ]
+        lines = [f"# {title} Player Handout", "", "## Known Lore", ""]
+        if not visible_notes:
+            lines.extend(["No player-visible lore notes yet.", ""])
+        for note in visible_notes:
+            text = note.handout_text or note.body
+            if note.visibility == "redacted":
+                text = "[redacted]"
+            lines.extend([f"### {note.title}", "", text or "No handout text recorded.", ""])
+        known_entity_ids = {
+            note.subject_id for note in visible_notes if note.subject_type == "entity" and note.subject_id
+        }
+        if known_entity_ids:
+            lines.extend(["## Known Entities", ""])
+            for entity in entities:
+                if entity.id in known_entity_ids:
+                    lines.extend([f"### {entity.name}", "", entity.description, ""])
+        return "\n".join(lines).strip() + "\n"
+
+    @staticmethod
+    def _campaign_session_brief_markdown(
+        title: str,
+        sessions: list[CampaignSessionRead],
+        notes: list[LoreNoteRead],
+        clocks: list[FactionClockRead],
+    ) -> str:
+        lines = [f"# {title} Session Brief", "", "## Recent Sessions", ""]
+        for session in sessions[:3]:
+            lines.extend([f"### {session.session_number}. {session.title}", ""])
+            if session.recap:
+                lines.extend([session.recap, ""])
+            if session.consequences:
+                lines.extend([f"- Consequences: {session.consequences}", ""])
+        active_clocks = [clock for clock in clocks if clock.status == "active"]
+        lines.extend(["## Active Clocks", ""])
+        if not active_clocks:
+            lines.extend(["No active clocks.", ""])
+        for clock in active_clocks:
+            lines.extend([f"- {clock.title}: {clock.filled_segments}/{clock.segments}"])
+            if clock.stakes:
+                lines.extend([f"  - Stakes: {clock.stakes}"])
+        prep_notes = [note for note in notes if note.visibility != "player_visible"][:8]
+        lines.extend(["", "## Prep Notes", ""])
+        if not prep_notes:
+            lines.extend(["No prep notes recorded.", ""])
+        for note in prep_notes:
+            lines.extend([f"### {note.title}", "", note.body or note.handout_text or "", ""])
+        return "\n".join(lines).strip() + "\n"
+
+    @staticmethod
+    def _campaign_dm_brief_markdown(
+        title: str,
+        sessions: list[CampaignSessionRead],
+        notes: list[LoreNoteRead],
+        clocks: list[FactionClockRead],
+    ) -> str:
+        lines = [f"# {title} DM Campaign Brief", "", "## Faction Clocks", ""]
+        if not clocks:
+            lines.extend(["No faction clocks yet.", ""])
+        for clock in clocks:
+            lines.extend([f"### {clock.title}", ""])
+            lines.extend([f"- Status: {clock.status}", f"- Progress: {clock.filled_segments}/{clock.segments}"])
+            if clock.stakes:
+                lines.extend([f"- Stakes: {clock.stakes}"])
+            lines.append("")
+        lines.extend(["## Sessions", ""])
+        if not sessions:
+            lines.extend(["No campaign sessions yet.", ""])
+        for session in sessions:
+            lines.extend([f"### {session.session_number}. {session.title}", ""])
+            for label, text in (
+                ("Recap", session.recap),
+                ("Player Actions", session.player_actions),
+                ("Consequences", session.consequences),
+            ):
+                if text:
+                    lines.extend([f"**{label}:** {text}", ""])
+        lines.extend(["## Lore Notes", ""])
+        if not notes:
+            lines.extend(["No lore notes yet.", ""])
+        for note in notes:
+            lines.extend([f"### {note.title}", ""])
+            lines.extend([f"- Visibility: {note.visibility}", f"- Truth: {note.truth_state}"])
+            if note.reveal_condition:
+                lines.extend([f"- Reveal: {note.reveal_condition}"])
+            body = note.body or note.handout_text
+            if body:
+                lines.extend(["", body])
             lines.append("")
         return "\n".join(lines).strip() + "\n"
 

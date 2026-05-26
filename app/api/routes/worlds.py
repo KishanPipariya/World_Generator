@@ -6,6 +6,12 @@ from app.deps import get_world_service
 from app.schemas.world import (
     AgenticGenerateRequest,
     AgenticGenerateResponse,
+    CampaignImpactReviewRequest,
+    CampaignImpactReviewResponse,
+    CampaignSessionCreate,
+    CampaignSessionListResponse,
+    CampaignSessionRead,
+    CampaignSessionUpdate,
     ConsistencyIssueStateListResponse,
     ConsistencyIssueStateRead,
     ConsistencyIssueUpdate,
@@ -20,6 +26,10 @@ from app.schemas.world import (
     EntityRead,
     EntityUpdate,
     ExportPreset,
+    FactionClockCreate,
+    FactionClockListResponse,
+    FactionClockRead,
+    FactionClockUpdate,
     GenerateRequest,
     GenerateResponse,
     GenerationSuggestionCreate,
@@ -27,6 +37,10 @@ from app.schemas.world import (
     GraphViewCreate,
     GraphViewListResponse,
     GraphViewRead,
+    LoreNoteCreate,
+    LoreNoteListResponse,
+    LoreNoteRead,
+    LoreNoteUpdate,
     PassageCheckRequest,
     PassageCheckResponse,
     PlanningBoardCreate,
@@ -458,6 +472,191 @@ def create_planning_card(
         return svc.create_planning_card(world_id, board_id, body)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World or board not found")
+
+
+@router.get("/{world_id}/campaign-sessions", response_model=CampaignSessionListResponse)
+def list_campaign_sessions(
+    world_id: UUID,
+    svc: WorldService = Depends(get_world_service),
+) -> CampaignSessionListResponse:
+    sessions = svc.list_campaign_sessions(world_id)
+    if sessions is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
+    return CampaignSessionListResponse(sessions=sessions)
+
+
+@router.post(
+    "/{world_id}/campaign-sessions",
+    response_model=CampaignSessionRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_campaign_session(
+    world_id: UUID,
+    body: CampaignSessionCreate,
+    svc: WorldService = Depends(get_world_service),
+) -> CampaignSessionRead:
+    try:
+        return svc.create_campaign_session(world_id, body)
+    except ValueError as exc:
+        detail = "World not found" if str(exc) == "World not found" else str(exc)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
+
+
+@router.patch("/{world_id}/campaign-sessions/{session_id}", response_model=CampaignSessionRead)
+def update_campaign_session(
+    world_id: UUID,
+    session_id: UUID,
+    body: CampaignSessionUpdate,
+    svc: WorldService = Depends(get_world_service),
+) -> CampaignSessionRead:
+    try:
+        session = svc.update_campaign_session(world_id, session_id, body)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign session not found")
+    return session
+
+
+@router.delete("/{world_id}/campaign-sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_campaign_session(
+    world_id: UUID,
+    session_id: UUID,
+    svc: WorldService = Depends(get_world_service),
+) -> None:
+    deleted = svc.delete_campaign_session(world_id, session_id)
+    if deleted is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign session not found")
+
+
+@router.post(
+    "/{world_id}/campaign-sessions/{session_id}/impact-review",
+    response_model=CampaignImpactReviewResponse,
+)
+def create_campaign_impact_review(
+    world_id: UUID,
+    session_id: UUID,
+    body: CampaignImpactReviewRequest | None = None,
+    svc: WorldService = Depends(get_world_service),
+) -> CampaignImpactReviewResponse:
+    suggestion = svc.create_session_impact_review(
+        world_id, session_id, body.instruction if body else None
+    )
+    if not suggestion:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign session not found")
+    return CampaignImpactReviewResponse(suggestion=suggestion)
+
+
+@router.get("/{world_id}/lore-notes", response_model=LoreNoteListResponse)
+def list_lore_notes(
+    world_id: UUID,
+    svc: WorldService = Depends(get_world_service),
+) -> LoreNoteListResponse:
+    notes = svc.list_lore_notes(world_id)
+    if notes is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
+    return LoreNoteListResponse(notes=notes)
+
+
+@router.post("/{world_id}/lore-notes", response_model=LoreNoteRead, status_code=status.HTTP_201_CREATED)
+def create_lore_note(
+    world_id: UUID,
+    body: LoreNoteCreate,
+    svc: WorldService = Depends(get_world_service),
+) -> LoreNoteRead:
+    try:
+        return svc.create_lore_note(world_id, body)
+    except ValueError as exc:
+        detail = "World not found" if str(exc) == "World not found" else str(exc)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
+
+
+@router.patch("/{world_id}/lore-notes/{note_id}", response_model=LoreNoteRead)
+def update_lore_note(
+    world_id: UUID,
+    note_id: UUID,
+    body: LoreNoteUpdate,
+    svc: WorldService = Depends(get_world_service),
+) -> LoreNoteRead:
+    try:
+        note = svc.update_lore_note(world_id, note_id, body)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    if not note:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lore note not found")
+    return note
+
+
+@router.delete("/{world_id}/lore-notes/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_lore_note(
+    world_id: UUID,
+    note_id: UUID,
+    svc: WorldService = Depends(get_world_service),
+) -> None:
+    deleted = svc.delete_lore_note(world_id, note_id)
+    if deleted is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lore note not found")
+
+
+@router.get("/{world_id}/faction-clocks", response_model=FactionClockListResponse)
+def list_faction_clocks(
+    world_id: UUID,
+    svc: WorldService = Depends(get_world_service),
+) -> FactionClockListResponse:
+    clocks = svc.list_faction_clocks(world_id)
+    if clocks is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
+    return FactionClockListResponse(clocks=clocks)
+
+
+@router.post(
+    "/{world_id}/faction-clocks",
+    response_model=FactionClockRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_faction_clock(
+    world_id: UUID,
+    body: FactionClockCreate,
+    svc: WorldService = Depends(get_world_service),
+) -> FactionClockRead:
+    try:
+        return svc.create_faction_clock(world_id, body)
+    except ValueError as exc:
+        detail = "World not found" if str(exc) == "World not found" else str(exc)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail)
+
+
+@router.patch("/{world_id}/faction-clocks/{clock_id}", response_model=FactionClockRead)
+def update_faction_clock(
+    world_id: UUID,
+    clock_id: UUID,
+    body: FactionClockUpdate,
+    svc: WorldService = Depends(get_world_service),
+) -> FactionClockRead:
+    try:
+        clock = svc.update_faction_clock(world_id, clock_id, body)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    if not clock:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Faction clock not found")
+    return clock
+
+
+@router.delete("/{world_id}/faction-clocks/{clock_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_faction_clock(
+    world_id: UUID,
+    clock_id: UUID,
+    svc: WorldService = Depends(get_world_service),
+) -> None:
+    deleted = svc.delete_faction_clock(world_id, clock_id)
+    if deleted is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Faction clock not found")
 
 
 @router.get("/{world_id}/revisions", response_model=RevisionVersionListResponse)

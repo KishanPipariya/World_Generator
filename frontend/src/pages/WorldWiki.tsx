@@ -12,10 +12,12 @@ import {
 } from 'lucide-react';
 import {
   fetchEntities,
+  fetchLoreNotes,
   fetchRelationships,
   fetchTimelineEvents,
   fetchWorld,
   type Entity,
+  type LoreNote,
   type Relationship,
   type TimelineEvent,
   type World,
@@ -53,6 +55,8 @@ const WorldWiki = () => {
   const [entities, setEntities] = useState<Entity[]>([]);
   const [relationships, setRelationships] = useState<Relationship[]>([]);
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
+  const [loreNotes, setLoreNotes] = useState<LoreNote[]>([]);
+  const [visibilityMode, setVisibilityMode] = useState<'dm' | 'player'>('dm');
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTypes, setActiveTypes] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -68,13 +72,15 @@ const WorldWiki = () => {
       fetchEntities(worldId),
       fetchRelationships(worldId),
       fetchTimelineEvents(worldId).catch(() => []),
+      fetchLoreNotes(worldId).catch(() => []),
     ])
-      .then(([worldData, entityData, relationshipData, timelineData]) => {
+      .then(([worldData, entityData, relationshipData, timelineData, noteData]) => {
         if (cancelled) return;
         setWorld(worldData);
         setEntities(entityData);
         setRelationships(relationshipData);
         setTimelineEvents(timelineData);
+        setLoreNotes(noteData);
         setErrorMessage('');
       })
       .catch(() => {
@@ -83,6 +89,7 @@ const WorldWiki = () => {
           setEntities([]);
           setRelationships([]);
           setTimelineEvents([]);
+          setLoreNotes([]);
           setErrorMessage('Unable to load this world wiki.');
         }
       })
@@ -95,22 +102,39 @@ const WorldWiki = () => {
     };
   }, [worldId]);
 
-  const entityById = useMemo(() => new Map(entities.map((entity) => [entity.id, entity])), [entities]);
+  const playerKnownEntityIds = useMemo(
+    () => new Set(loreNotes
+      .filter((note) => note.subject_type === 'entity' && note.subject_id && ['player_visible', 'discovered'].includes(note.visibility))
+      .map((note) => note.subject_id as string)),
+    [loreNotes],
+  );
+  const visibleEntities = useMemo(
+    () => visibilityMode === 'dm' ? entities : entities.filter((entity) => playerKnownEntityIds.has(entity.id)),
+    [entities, playerKnownEntityIds, visibilityMode],
+  );
+  const visibleLoreNotes = useMemo(
+    () => visibilityMode === 'dm'
+      ? loreNotes
+      : loreNotes.filter((note) => ['player_visible', 'discovered', 'redacted'].includes(note.visibility)),
+    [loreNotes, visibilityMode],
+  );
+
+  const entityById = useMemo(() => new Map(visibleEntities.map((entity) => [entity.id, entity])), [visibleEntities]);
   const selectedEntity = selectedEntityId ? entityById.get(selectedEntityId) : undefined;
 
   const entityTypes = useMemo(
-    () => Array.from(new Set(entities.map((entity) => entityTypeLabel(entity.entity_type)))).sort(),
-    [entities],
+    () => Array.from(new Set(visibleEntities.map((entity) => entityTypeLabel(entity.entity_type)))).sort(),
+    [visibleEntities],
   );
 
   const query = normalize(searchTerm);
 
   const matchedEntityIds = useMemo(() => {
-    if (!query) return new Set(entities.map((entity) => entity.id));
+    if (!query) return new Set(visibleEntities.map((entity) => entity.id));
 
     const matches = new Set<string>();
 
-    entities.forEach((entity) => {
+    visibleEntities.forEach((entity) => {
       const entityText = [
         entity.name,
         entity.entity_type,
@@ -150,16 +174,27 @@ const WorldWiki = () => {
       }
     });
 
+    visibleLoreNotes.forEach((note) => {
+      if (note.subject_type === 'entity' && note.subject_id && matchesQuery([note.title, note.body, note.handout_text].join(' '), query)) {
+        matches.add(note.subject_id);
+      }
+    });
+
     return matches;
-  }, [entities, query, relationships, timelineEvents]);
+  }, [query, relationships, timelineEvents, visibleEntities, visibleLoreNotes]);
 
   const filteredEntities = useMemo(() => {
     const typeFilterEnabled = activeTypes.size > 0;
-    return sortEntities(entities).filter((entity) => {
+    return sortEntities(visibleEntities).filter((entity) => {
       const type = entityTypeLabel(entity.entity_type);
       return (!typeFilterEnabled || activeTypes.has(type)) && matchedEntityIds.has(entity.id);
     });
-  }, [activeTypes, entities, matchedEntityIds]);
+  }, [activeTypes, matchedEntityIds, visibleEntities]);
+
+  const selectedLoreNotes = useMemo(() => {
+    if (!selectedEntity) return [];
+    return visibleLoreNotes.filter((note) => note.subject_type === 'entity' && note.subject_id === selectedEntity.id);
+  }, [selectedEntity, visibleLoreNotes]);
 
   const groupedEntities = useMemo(() => {
     return filteredEntities.reduce<Record<string, Entity[]>>((groups, entity) => {
@@ -233,7 +268,7 @@ const WorldWiki = () => {
     );
   }
 
-  const hasEntities = entities.length > 0;
+  const hasEntities = visibleEntities.length > 0;
   const overviewTimeline = sortTimeline(timelineEvents).slice(0, 6);
 
   return (
@@ -258,6 +293,29 @@ const WorldWiki = () => {
             placeholder="Search canon"
           />
         </label>
+
+        <div className="wiki-filter-block">
+          <div className="wiki-sidebar-heading">
+            <BookOpen size={14} />
+            <span>Visibility</span>
+          </div>
+          <div className="wiki-type-filters">
+            <button
+              className={visibilityMode === 'dm' ? 'active' : ''}
+              type="button"
+              onClick={() => setVisibilityMode('dm')}
+            >
+              DM
+            </button>
+            <button
+              className={visibilityMode === 'player' ? 'active' : ''}
+              type="button"
+              onClick={() => setVisibilityMode('player')}
+            >
+              Player
+            </button>
+          </div>
+        </div>
 
         {entityTypes.length > 0 && (
           <div className="wiki-filter-block">
@@ -379,6 +437,21 @@ const WorldWiki = () => {
                 </ol>
               </section>
             )}
+
+            {selectedLoreNotes.length > 0 && (
+              <section className="wiki-section">
+                <h2>Lore Notes</h2>
+                <div className="wiki-relation-list">
+                  {selectedLoreNotes.map((note) => (
+                    <div className="wiki-relation-row" key={note.id}>
+                      <span className="wiki-relation-direction">{note.visibility.replace('_', ' ')}</span>
+                      <strong>{note.title}</strong>
+                      <p>{note.visibility === 'redacted' ? '[redacted]' : note.handout_text || note.body}</p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
           </article>
         ) : (
           <article className="wiki-article">
@@ -392,7 +465,7 @@ const WorldWiki = () => {
               <div className="wiki-overview-grid">
                 {entityTypes.map((type) => (
                   <div className="wiki-overview-stat" key={type}>
-                    <strong>{entities.filter((entity) => entityTypeLabel(entity.entity_type) === type).length}</strong>
+                    <strong>{visibleEntities.filter((entity) => entityTypeLabel(entity.entity_type) === type).length}</strong>
                     <span>{type}</span>
                   </div>
                 ))}
@@ -490,9 +563,10 @@ const WorldWiki = () => {
           <>
             <section>
               <h2>World</h2>
-              <p>{entities.length} entities</p>
+              <p>{visibleEntities.length} entities</p>
               <p>{relationships.length} relationships</p>
               <p>{timelineEvents.length} timeline events</p>
+              <p>{visibleLoreNotes.length} lore notes</p>
             </section>
             <section>
               <h2>Metadata</h2>

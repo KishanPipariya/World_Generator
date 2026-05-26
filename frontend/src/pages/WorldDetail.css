@@ -364,6 +364,10 @@
   align-items: start;
 }
 
+.planning-form .full-width {
+  grid-column: 1 / -1;
+}
+
 .planning-board-strip {
   display: flex;
   gap: 0.75rem;
