@@ -17,8 +17,16 @@ from app.schemas.world import (
     GenerateResponse,
     GenerationSuggestionCreate,
     GenerationSuggestionListResponse,
+    GraphViewCreate,
+    GraphViewListResponse,
+    GraphViewRead,
     PassageCheckRequest,
     PassageCheckResponse,
+    PlanningBoardCreate,
+    PlanningBoardListResponse,
+    PlanningBoardRead,
+    PlanningCardCreate,
+    PlanningCardRead,
     MarkdownExportResponse,
     RelationshipCreate,
     RelationshipListResponse,
@@ -227,6 +235,9 @@ def create_relationship(
             category=body.category,
             strength=body.strength,
             history=body.history,
+            stance=body.stance,
+            color=body.color,
+            display_priority=body.display_priority,
         )
     except ValueError:
         raise HTTPException(
@@ -336,6 +347,86 @@ def create_timeline_event(
         return svc.create_timeline_event(world_id, body)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
+
+
+@router.get("/{world_id}/graph-views", response_model=GraphViewListResponse)
+def list_graph_views(
+    world_id: UUID,
+    svc: WorldService = Depends(get_world_service),
+) -> GraphViewListResponse:
+    views = svc.list_graph_views(world_id)
+    if views is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
+    return GraphViewListResponse(views=views)
+
+
+@router.post("/{world_id}/graph-views", response_model=GraphViewRead, status_code=status.HTTP_201_CREATED)
+def create_graph_view(
+    world_id: UUID,
+    body: GraphViewCreate,
+    svc: WorldService = Depends(get_world_service),
+) -> GraphViewRead:
+    try:
+        return svc.create_graph_view(world_id, body)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
+
+
+@router.delete("/{world_id}/graph-views/{view_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_graph_view(
+    world_id: UUID,
+    view_id: UUID,
+    svc: WorldService = Depends(get_world_service),
+) -> None:
+    deleted = svc.delete_graph_view(world_id, view_id)
+    if deleted is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Graph view not found")
+
+
+@router.get("/{world_id}/planning-boards", response_model=PlanningBoardListResponse)
+def list_planning_boards(
+    world_id: UUID,
+    svc: WorldService = Depends(get_world_service),
+) -> PlanningBoardListResponse:
+    boards = svc.list_planning_boards(world_id)
+    if boards is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
+    return PlanningBoardListResponse(boards=boards)
+
+
+@router.post(
+    "/{world_id}/planning-boards",
+    response_model=PlanningBoardRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_planning_board(
+    world_id: UUID,
+    body: PlanningBoardCreate,
+    svc: WorldService = Depends(get_world_service),
+) -> PlanningBoardRead:
+    try:
+        return svc.create_planning_board(world_id, body)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
+
+
+@router.post(
+    "/{world_id}/planning-boards/{board_id}/cards",
+    response_model=PlanningCardRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_planning_card(
+    world_id: UUID,
+    board_id: UUID,
+    body: PlanningCardCreate,
+    svc: WorldService = Depends(get_world_service),
+) -> PlanningCardRead:
+    try:
+        return svc.create_planning_card(world_id, board_id, body)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World or board not found")
 
 
 @router.get("/{world_id}/revisions", response_model=RevisionVersionListResponse)

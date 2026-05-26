@@ -237,11 +237,32 @@
 
 .timeline-form textarea,
 .timeline-form .form-row,
+.timeline-form select,
 .timeline-form button {
   grid-column: 1 / -1;
 }
 
+.timeline-track {
+  position: relative;
+  display: flex;
+  gap: 0.9rem;
+  overflow-x: auto;
+  padding: 0.5rem 0 0.75rem;
+}
+
+.timeline-track::before {
+  content: "";
+  position: absolute;
+  top: 1.55rem;
+  left: 1rem;
+  right: 1rem;
+  height: 1px;
+  background: rgba(148, 163, 184, 0.28);
+}
+
 .timeline-item {
+  position: relative;
+  min-width: 240px;
   display: grid;
   grid-template-columns: 2.4rem minmax(0, 1fr);
   gap: 0.75rem;
@@ -265,9 +286,49 @@
   color: var(--text-secondary);
 }
 
+.timeline-item em {
+  display: block;
+  margin-top: 0.15rem;
+  color: #bfdbfe;
+  font-size: 0.78rem;
+  font-style: normal;
+}
+
 .timeline-item small,
 .revision-item small {
+  display: block;
   color: var(--text-muted);
+}
+
+.planning-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 140px auto;
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.planning-board-strip {
+  display: flex;
+  gap: 0.75rem;
+  overflow-x: auto;
+  padding-bottom: 0.3rem;
+}
+
+.planning-card {
+  min-width: 210px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.planning-card small,
+.planning-card span {
+  color: var(--text-muted);
+  font-size: 0.78rem;
 }
 
 .revision-item {
@@ -569,6 +630,24 @@
   padding: 0 0.6rem;
 }
 
+.saved-views-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+  overflow-x: auto;
+}
+
+.saved-views-row .form-input {
+  max-width: 170px;
+  min-height: 2.25rem;
+}
+
+.compact-view-button {
+  min-width: max-content;
+  padding: 0 0.75rem;
+}
+
 .graph-canvas {
   height: 580px;
   overflow: hidden;
@@ -637,6 +716,18 @@
 .world-graph-edge.selected path {
   stroke: #3b82f6;
   stroke-width: 3;
+}
+
+.world-graph-edge.stance-alliance path {
+  stroke: #22c55e;
+}
+
+.world-graph-edge.stance-conflict path {
+  stroke: #ef4444;
+}
+
+.world-graph-edge.stance-neutral path {
+  stroke: #94a3b8;
 }
 
 .react-flow__edge-textbg {
@@ -744,7 +835,8 @@
   .demo-review-grid,
   .form-row,
   .form-row.compact,
-  .relationship-form {
+  .relationship-form,
+  .planning-form {
     grid-template-columns: 1fr;
   }
 

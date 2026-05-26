@@ -29,7 +29,7 @@ const EntityNode = ({ data }: NodeProps<EntityGraphNode>) => (
   <div className="entity-graph-node-content">
     <Handle type="target" position={Position.Left} />
     <strong>{data.label}</strong>
-    <span>{data.entityType}</span>
+    <span>{data.entityType} · {data.relationshipCount} links</span>
     <Handle type="source" position={Position.Right} />
   </div>
 );

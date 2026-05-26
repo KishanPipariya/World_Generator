@@ -72,9 +72,58 @@ class _FakeSession:
                 "participants_json": kwargs["participants_json"],
                 "causes": kwargs["causes"],
                 "consequences": kwargs["consequences"],
+                "date_label": kwargs.get("date_label"),
+                "era_label": kwargs.get("era_label"),
+                "depends_on_json": kwargs.get("depends_on_json", "[]"),
                 "created_at": kwargs["created_at"],
             }
             self.db["timeline"][kwargs["event_id"]] = record
+            return _FakeResult([{"props": record}])
+        if "CREATE (w)<-[:BELONGS_TO]-(v:GraphView" in query:
+            if kwargs["w_id"] not in self.db["worlds"]:
+                return _FakeResult([])
+            record = {
+                "id": kwargs["view_id"],
+                "world_id": kwargs["w_id"],
+                "name": kwargs["name"],
+                "layout_mode": kwargs["layout_mode"],
+                "filters_json": kwargs["filters_json"],
+                "camera_json": kwargs["camera_json"],
+                "node_positions_json": kwargs["node_positions_json"],
+                "created_at": kwargs["created_at"],
+                "updated_at": kwargs["updated_at"],
+            }
+            self.db["graph_views"][kwargs["view_id"]] = record
+            return _FakeResult([{"props": record}])
+        if "CREATE (w)<-[:BELONGS_TO]-(b:PlanningBoard" in query:
+            if kwargs["w_id"] not in self.db["worlds"]:
+                return _FakeResult([])
+            record = {
+                "id": kwargs["board_id"],
+                "world_id": kwargs["w_id"],
+                "name": kwargs["name"],
+                "board_type": kwargs["board_type"],
+                "created_at": kwargs["created_at"],
+            }
+            self.db["planning_boards"][kwargs["board_id"]] = record
+            return _FakeResult([{"props": record}])
+        if "CREATE (b)<-[:BELONGS_TO]-(c:PlanningCard" in query:
+            if kwargs["board_id"] not in self.db["planning_boards"]:
+                return _FakeResult([])
+            record = {
+                "id": kwargs["card_id"],
+                "board_id": kwargs["board_id"],
+                "world_id": kwargs["w_id"],
+                "title": kwargs["title"],
+                "description": kwargs["description"],
+                "lane": kwargs["lane"],
+                "position": kwargs["position"],
+                "entity_links_json": kwargs["entity_links_json"],
+                "relationship_links_json": kwargs["relationship_links_json"],
+                "timeline_event_links_json": kwargs["timeline_event_links_json"],
+                "created_at": kwargs["created_at"],
+            }
+            self.db["planning_cards"][kwargs["card_id"]] = record
             return _FakeResult([{"props": record}])
         if "CREATE (r:RevisionVersion" in query:
             record = {
@@ -103,6 +152,9 @@ class _FakeSession:
                 "category": kwargs.get("category"),
                 "strength": kwargs.get("strength"),
                 "history": kwargs.get("history"),
+                "stance": kwargs.get("stance"),
+                "color": kwargs.get("color"),
+                "display_priority": kwargs.get("display_priority"),
                 "created_at": kwargs["created_at"],
             }
             record = {
@@ -169,6 +221,12 @@ class _FakeSession:
                 del self.db["relationships"][kwargs["r_id"]]
                 return _FakeResult([{"deleted": 1}])
             return _FakeResult([{"deleted": 0}])
+        if "DETACH DELETE v" in query:
+            record = self.db["graph_views"].get(kwargs["view_id"])
+            if record and record["world_id"] == kwargs["w_id"]:
+                del self.db["graph_views"][kwargs["view_id"]]
+                return _FakeResult([{"deleted": 1}])
+            return _FakeResult([{"deleted": 0}])
         if "id" in kwargs and "MATCH (w)<-[belongs]-(e)" in query:
             return _FakeResult(
                 [v for v in self.db["entities"].values() if v["world_id"] == kwargs["id"]]
@@ -197,6 +255,22 @@ class _FakeSession:
             return _FakeResult(
                 [{"props": v} for v in self.db["timeline"].values() if v["world_id"] == kwargs["w_id"]]
             )
+        if '"GraphView" IN labels' in query:
+            return _FakeResult(
+                [{"props": v} for v in self.db["graph_views"].values() if v["world_id"] == kwargs["w_id"]]
+            )
+        if '"PlanningBoard" IN labels' in query and '"PlanningCard" IN labels' not in query:
+            return _FakeResult(
+                [{"props": v} for v in self.db["planning_boards"].values() if v["world_id"] == kwargs["w_id"]]
+            )
+        if '"PlanningCard" IN labels' in query:
+            return _FakeResult(
+                [
+                    {"props": v}
+                    for v in self.db["planning_cards"].values()
+                    if v["world_id"] == kwargs["w_id"] and v["board_id"] == kwargs["board_id"]
+                ]
+            )
         if '"RevisionVersion" IN labels' in query:
             return _FakeResult(
                 [
@@ -213,7 +287,17 @@ class _FakeSession:
 
 class _FakeDriver:
     def __init__(self):
-        self.db = {"worlds": {}, "entities": {}, "relationships": {}, "suggestions": {}, "timeline": {}, "revisions": {}}
+        self.db = {
+            "worlds": {},
+            "entities": {},
+            "relationships": {},
+            "suggestions": {},
+            "timeline": {},
+            "revisions": {},
+            "graph_views": {},
+            "planning_boards": {},
+            "planning_cards": {},
+        }
         
     def session(self):
         return _FakeSession(self.db)
@@ -525,6 +609,95 @@ def test_timeline_revisions_passage_and_export_presets(client: TestClient) -> No
     assert exported.status_code == 200
     assert exported.json()["preset"] == "timeline_only"
     assert "# Roadmap Timeline" in exported.json()["content"]
+
+
+def test_visual_planning_resources(client: TestClient) -> None:
+    world = client.post("/worlds", json={"title": "Visual Plan"}).json()
+    wid = world["id"]
+    entity = client.post(
+        f"/worlds/{wid}/entities",
+        json={"name": "Mara", "entity_type": "Character", "description": "A cartographer."},
+    ).json()
+    target = client.post(
+        f"/worlds/{wid}/entities",
+        json={"name": "The Concord", "entity_type": "Faction", "description": "A council."},
+    ).json()
+    relationship = client.post(
+        f"/worlds/{wid}/relationships",
+        json={
+            "source_entity_id": entity["id"],
+            "target_entity_id": target["id"],
+            "relation_type": "opposes",
+            "stance": "conflict",
+            "color": "#ef4444",
+            "display_priority": 9,
+        },
+    )
+    assert relationship.status_code == 201
+    assert relationship.json()["stance"] == "conflict"
+    assert relationship.json()["display_priority"] == 9
+
+    first_event = client.post(
+        f"/worlds/{wid}/timeline",
+        json={
+            "title": "First Oath",
+            "event_order": 1,
+            "date_label": "Year 12",
+            "era_label": "Ashen Age",
+        },
+    ).json()
+    second_event = client.post(
+        f"/worlds/{wid}/timeline",
+        json={
+            "title": "Broken Oath",
+            "event_order": 2,
+            "depends_on": [first_event["id"]],
+        },
+    )
+    assert second_event.status_code == 201
+    assert second_event.json()["depends_on"] == [first_event["id"]]
+
+    graph_view = client.post(
+        f"/worlds/{wid}/graph-views",
+        json={
+            "name": "Political Map",
+            "layout_mode": "type_columns",
+            "filters": {"types": ["Character", "Faction"]},
+            "camera": {"x": 10, "y": -20, "zoom": 0.8},
+            "node_positions": {entity["id"]: {"x": 120, "y": 80}},
+        },
+    )
+    assert graph_view.status_code == 201
+    graph_view_id = graph_view.json()["id"]
+    listed_views = client.get(f"/worlds/{wid}/graph-views")
+    assert listed_views.status_code == 200
+    assert listed_views.json()["views"][0]["name"] == "Political Map"
+    assert listed_views.json()["views"][0]["node_positions"][entity["id"]]["x"] == 120
+
+    board = client.post(
+        f"/worlds/{wid}/planning-boards",
+        json={"name": "Act 2 Conflict", "board_type": "arc"},
+    )
+    assert board.status_code == 201
+    card = client.post(
+        f"/worlds/{wid}/planning-boards/{board.json()['id']}/cards",
+        json={
+            "title": "Mara confronts the Concord",
+            "lane": "Draft",
+            "position": 1,
+            "entity_links": [entity["id"]],
+            "relationship_links": [relationship.json()["id"]],
+            "timeline_event_links": [second_event.json()["id"]],
+        },
+    )
+    assert card.status_code == 201
+    boards = client.get(f"/worlds/{wid}/planning-boards")
+    assert boards.status_code == 200
+    assert boards.json()["boards"][0]["cards"][0]["title"] == "Mara confronts the Concord"
+
+    deleted = client.delete(f"/worlds/{wid}/graph-views/{graph_view_id}")
+    assert deleted.status_code == 204
+    assert client.get(f"/worlds/{wid}/graph-views").json()["views"] == []
 
 
 def test_entity_and_relationship_world_not_found(client: TestClient) -> None:

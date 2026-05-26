@@ -24,6 +24,9 @@ import {
   checkPassage,
   createTimelineEvent,
   createEntity,
+  createGraphView,
+  createPlanningBoard,
+  createPlanningCard,
   createRelationship,
   deleteEntity,
   deleteWorld,
@@ -31,7 +34,9 @@ import {
   exportMarkdown,
   fetchConsistencyReport,
   fetchEntities,
+  fetchGraphViews,
   fetchHealth,
+  fetchPlanningBoards,
   fetchRelationships,
   fetchRevisions,
   fetchSuggestions,
@@ -43,8 +48,11 @@ import {
   type ConsistencyReport,
   type Entity,
   type GenerationSuggestion,
+  type GraphLayoutMode,
+  type GraphView,
   type HealthStatus,
   type PassageCheck,
+  type PlanningBoard,
   type Relationship,
   type RevisionVersion,
   type TimelineEvent,
@@ -64,6 +72,13 @@ const EXPORT_PRESETS = [
   ['timeline_only', 'Timeline'],
   ['obsidian', 'Obsidian'],
 ] as const;
+const GRAPH_LAYOUTS: { value: GraphLayoutMode; label: string }[] = [
+  { value: 'manual', label: 'Manual' },
+  { value: 'force', label: 'Relationship' },
+  { value: 'type_columns', label: 'Type columns' },
+  { value: 'faction_clusters', label: 'Faction clusters' },
+  { value: 'timeline_order', label: 'Timeline' },
+];
 const TEMPLATE_FIELDS: Record<string, string[]> = {
   Character: ['goal', 'secret', 'fear', 'voice'],
   Location: ['hazards', 'economy', 'culture', 'landmark'],
@@ -119,12 +134,16 @@ const WorldDetail = () => {
   const [relationships, setRelationships] = useState<Relationship[]>([]);
   const [suggestions, setSuggestions] = useState<GenerationSuggestion[]>([]);
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
+  const [graphViews, setGraphViews] = useState<GraphView[]>([]);
+  const [planningBoards, setPlanningBoards] = useState<PlanningBoard[]>([]);
   const [revisions, setRevisions] = useState<RevisionVersion[]>([]);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [selectedRelationshipId, setSelectedRelationshipId] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<WorkspaceView>('editor');
   const [searchQuery, setSearchQuery] = useState('');
   const [graphTypeFilter, setGraphTypeFilter] = useState('All');
+  const [graphLayoutMode, setGraphLayoutMode] = useState<GraphLayoutMode>('manual');
+  const [graphViewName, setGraphViewName] = useState('');
   const [graphPositions, setGraphPositions] = useState<Record<string, { x: number; y: number }>>({});
   const [graphResetKey, setGraphResetKey] = useState(0);
   const [entityForm, setEntityForm] = useState<EntityForm>(blankEntity);
@@ -143,6 +162,15 @@ const WorldDetail = () => {
     description: '',
     causes: '',
     consequences: '',
+    date_label: '',
+    era_label: '',
+    depends_on: '',
+  });
+  const [planningForm, setPlanningForm] = useState({
+    boardName: '',
+    boardType: 'plot_thread' as PlanningBoard['board_type'],
+    cardTitle: '',
+    cardLane: 'Draft',
   });
   const [passageText, setPassageText] = useState('');
   const [passageReport, setPassageReport] = useState<PassageCheck | null>(null);
@@ -246,6 +274,8 @@ const WorldDetail = () => {
       graphHighlights.entityIds,
       graphHighlights.relationshipIds,
       graphPositions,
+      graphLayoutMode,
+      timelineEvents,
     ),
     [
       graphEntities,
@@ -255,17 +285,21 @@ const WorldDetail = () => {
       graphHighlights.entityIds,
       graphHighlights.relationshipIds,
       graphPositions,
+      graphLayoutMode,
+      timelineEvents,
     ],
   );
 
   const loadWorkspace = async (worldId: string) => {
     setErrorMessage('');
-    const [worldData, entityData, relationshipData, suggestionData, timelineData, healthData] = await Promise.all([
+    const [worldData, entityData, relationshipData, suggestionData, timelineData, graphViewData, boardData, healthData] = await Promise.all([
       fetchWorld(worldId),
       fetchEntities(worldId),
       fetchRelationships(worldId),
       fetchSuggestions(worldId).catch(() => []),
       fetchTimelineEvents(worldId).catch(() => []),
+      fetchGraphViews(worldId).catch(() => []),
+      fetchPlanningBoards(worldId).catch(() => []),
       fetchHealth().catch(() => null),
     ]);
     setWorld(worldData);
@@ -273,6 +307,8 @@ const WorldDetail = () => {
     setRelationships(relationshipData);
     setSuggestions(suggestionData);
     setTimelineEvents(timelineData);
+    setGraphViews(graphViewData);
+    setPlanningBoards(boardData);
     setHealth(healthData);
     setSelectedEntityId((current) => current ?? entityData[0]?.id ?? null);
   };
@@ -516,6 +552,13 @@ const WorldDetail = () => {
         ...relationshipForm,
         relation_type: relationshipForm.relation_type.trim(),
         notes: relationshipForm.notes || undefined,
+        category: relationshipForm.category || undefined,
+        strength: relationshipForm.strength || undefined,
+        stance: relationshipForm.category.toLowerCase() === 'alliance'
+          ? 'alliance'
+          : relationshipForm.category.toLowerCase() === 'conflict'
+            ? 'conflict'
+            : undefined,
       });
       setRelationshipForm({
         source_entity_id: '',
@@ -622,8 +665,20 @@ const WorldDetail = () => {
         participants: selectedEntityId ? [selectedEntityId] : [],
         causes: timelineForm.causes || null,
         consequences: timelineForm.consequences || null,
+        date_label: timelineForm.date_label || null,
+        era_label: timelineForm.era_label || null,
+        depends_on: timelineForm.depends_on ? [timelineForm.depends_on] : [],
       });
-      setTimelineForm({ title: '', event_order: timelineForm.event_order + 1, description: '', causes: '', consequences: '' });
+      setTimelineForm({
+        title: '',
+        event_order: timelineForm.event_order + 1,
+        description: '',
+        causes: '',
+        consequences: '',
+        date_label: '',
+        era_label: timelineForm.era_label,
+        depends_on: '',
+      });
       setTimelineEvents(await fetchTimelineEvents(id));
       setStatusMessage('Timeline event created.');
     } catch {
@@ -692,9 +747,84 @@ const WorldDetail = () => {
 
   const handleResetGraph = () => {
     setGraphPositions({});
+    setGraphLayoutMode('manual');
     setGraphResetKey((current) => current + 1);
     if (id) {
       window.localStorage.removeItem(`world-graph-positions:${id}`);
+    }
+  };
+
+  const handleSaveGraphView = async () => {
+    if (!id || !graphViewName.trim()) return;
+    setBusy(true);
+    setErrorMessage('');
+    try {
+      await createGraphView(id, {
+        name: graphViewName.trim(),
+        layout_mode: graphLayoutMode,
+        filters: { entity_type: graphTypeFilter },
+        camera: { x: 0, y: 0, zoom: 1 },
+        node_positions: graphPositions,
+      });
+      setGraphViews(await fetchGraphViews(id));
+      setGraphViewName('');
+      setStatusMessage('Graph view saved.');
+    } catch {
+      setErrorMessage('Unable to save graph view.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applyGraphView = (view: GraphView) => {
+    setGraphLayoutMode(view.layout_mode);
+    setGraphTypeFilter(typeof view.filters.entity_type === 'string' ? view.filters.entity_type : 'All');
+    setGraphPositions(view.node_positions ?? {});
+    setGraphResetKey((current) => current + 1);
+  };
+
+  const handleCreatePlanningBoard = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!id || !planningForm.boardName.trim()) return;
+    setBusy(true);
+    setErrorMessage('');
+    try {
+      await createPlanningBoard(id, {
+        name: planningForm.boardName.trim(),
+        board_type: planningForm.boardType,
+      });
+      setPlanningBoards(await fetchPlanningBoards(id));
+      setPlanningForm((current) => ({ ...current, boardName: '' }));
+      setStatusMessage('Planning board created.');
+    } catch {
+      setErrorMessage('Unable to create planning board.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleCreatePlanningCard = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!id || !planningBoards[0] || !planningForm.cardTitle.trim()) return;
+    setBusy(true);
+    setErrorMessage('');
+    try {
+      await createPlanningCard(id, planningBoards[0].id, {
+        title: planningForm.cardTitle.trim(),
+        description: selectedEntity ? `Linked to ${selectedEntity.name}` : '',
+        lane: planningForm.cardLane,
+        position: planningBoards[0].cards.length + 1,
+        entity_links: selectedEntityId ? [selectedEntityId] : [],
+        relationship_links: selectedRelationshipId ? [selectedRelationshipId] : [],
+        timeline_event_links: [],
+      });
+      setPlanningBoards(await fetchPlanningBoards(id));
+      setPlanningForm((current) => ({ ...current, cardTitle: '' }));
+      setStatusMessage('Planning card linked to canon.');
+    } catch {
+      setErrorMessage('Unable to create planning card.');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -1158,12 +1288,36 @@ const WorldDetail = () => {
                       className="form-input"
                     />
                   </div>
+                  <div className="form-row compact">
+                    <input
+                      value={timelineForm.era_label}
+                      onChange={(event) => setTimelineForm({ ...timelineForm, era_label: event.target.value })}
+                      placeholder="Era"
+                      className="form-input"
+                    />
+                    <input
+                      value={timelineForm.date_label}
+                      onChange={(event) => setTimelineForm({ ...timelineForm, date_label: event.target.value })}
+                      placeholder="Date label"
+                      className="form-input"
+                    />
+                  </div>
+                  <select
+                    value={timelineForm.depends_on}
+                    onChange={(event) => setTimelineForm({ ...timelineForm, depends_on: event.target.value })}
+                    className="form-input"
+                  >
+                    <option value="">No dependency</option>
+                    {timelineEvents.map((event) => (
+                      <option key={event.id} value={event.id}>{event.event_order}. {event.title}</option>
+                    ))}
+                  </select>
                   <button className="btn btn-primary" type="submit" disabled={busy}>
                     <Plus size={16} />
                     Add Event
                   </button>
                 </form>
-                <div className="timeline-list">
+                <div className="timeline-track">
                   {timelineEvents.length === 0 ? (
                     <p className="text-muted">No timeline events yet.</p>
                   ) : timelineEvents.map((event) => (
@@ -1171,14 +1325,82 @@ const WorldDetail = () => {
                       <span>{event.event_order}</span>
                       <div>
                         <strong>{event.title}</strong>
+                        {(event.era_label || event.date_label) && (
+                          <em>{[event.era_label, event.date_label].filter(Boolean).join(' / ')}</em>
+                        )}
                         {event.description && <p>{event.description}</p>}
                         {(event.causes || event.consequences) && (
                           <small>{[event.causes && `Cause: ${event.causes}`, event.consequences && `Consequence: ${event.consequences}`].filter(Boolean).join(' · ')}</small>
+                        )}
+                        {event.depends_on.length > 0 && (
+                          <small>Depends on {event.depends_on.length} prior event{event.depends_on.length === 1 ? '' : 's'}</small>
                         )}
                       </div>
                     </article>
                   ))}
                 </div>
+              </section>
+
+              <section className="glass content-section">
+                <div className="section-header">
+                  <ClipboardCheck className="text-primary" />
+                  <h2>Planning Board</h2>
+                </div>
+                {planningBoards.length === 0 ? (
+                  <form className="planning-form" onSubmit={handleCreatePlanningBoard}>
+                    <input
+                      value={planningForm.boardName}
+                      onChange={(event) => setPlanningForm({ ...planningForm, boardName: event.target.value })}
+                      placeholder="Board name"
+                      className="form-input"
+                    />
+                    <select
+                      value={planningForm.boardType}
+                      onChange={(event) => setPlanningForm({ ...planningForm, boardType: event.target.value as PlanningBoard['board_type'] })}
+                      className="form-input"
+                    >
+                      <option value="plot_thread">Plot thread</option>
+                      <option value="arc">Arc</option>
+                      <option value="chapter">Chapter</option>
+                      <option value="scene">Scene</option>
+                      <option value="custom">Custom</option>
+                    </select>
+                    <button className="btn btn-primary" type="submit" disabled={busy}>
+                      <Plus size={16} />
+                      Create Board
+                    </button>
+                  </form>
+                ) : (
+                  <>
+                    <form className="planning-form" onSubmit={handleCreatePlanningCard}>
+                      <input
+                        value={planningForm.cardTitle}
+                        onChange={(event) => setPlanningForm({ ...planningForm, cardTitle: event.target.value })}
+                        placeholder="Scene or thread card"
+                        className="form-input"
+                      />
+                      <input
+                        value={planningForm.cardLane}
+                        onChange={(event) => setPlanningForm({ ...planningForm, cardLane: event.target.value })}
+                        placeholder="Lane"
+                        className="form-input"
+                      />
+                      <button className="btn btn-primary" type="submit" disabled={busy}>
+                        <Plus size={16} />
+                        Link Card
+                      </button>
+                    </form>
+                    <div className="planning-board-strip">
+                      {planningBoards[0].cards.map((card) => (
+                        <article className="planning-card" key={card.id}>
+                          <small>{card.lane}</small>
+                          <strong>{card.title}</strong>
+                          <span>{card.entity_links.length + card.relationship_links.length + card.timeline_event_links.length} canon links</span>
+                        </article>
+                      ))}
+                    </div>
+                  </>
+                )}
               </section>
 
               {selectedEntity && revisions.length > 0 && (
@@ -1213,6 +1435,19 @@ const WorldDetail = () => {
                 <div className="graph-tools">
                   <select
                     className="form-input"
+                    value={graphLayoutMode}
+                    onChange={(event) => {
+                      setGraphLayoutMode(event.target.value as GraphLayoutMode);
+                      setGraphResetKey((current) => current + 1);
+                    }}
+                    title="Graph layout mode"
+                  >
+                    {GRAPH_LAYOUTS.map((layout) => (
+                      <option key={layout.value} value={layout.value}>{layout.label}</option>
+                    ))}
+                  </select>
+                  <select
+                    className="form-input"
                     value={graphTypeFilter}
                     onChange={(event) => setGraphTypeFilter(event.target.value)}
                     title="Filter graph by entity type"
@@ -1224,6 +1459,23 @@ const WorldDetail = () => {
                     <RefreshCcw size={16} />
                   </button>
                 </div>
+              </div>
+              <div className="saved-views-row">
+                <input
+                  value={graphViewName}
+                  onChange={(event) => setGraphViewName(event.target.value)}
+                  placeholder="Named view"
+                  className="form-input"
+                />
+                <button className="btn btn-secondary compact-button" type="button" onClick={handleSaveGraphView} disabled={busy || !graphViewName.trim()}>
+                  <Save size={16} />
+                  Save View
+                </button>
+                {graphViews.map((view) => (
+                  <button className="preset-button compact-view-button" key={view.id} type="button" onClick={() => applyGraphView(view)}>
+                    {view.name}
+                  </button>
+                ))}
               </div>
               <div className="graph-canvas">
                 <WorldGraphView

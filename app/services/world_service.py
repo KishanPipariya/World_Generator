@@ -16,8 +16,15 @@ from app.schemas.world import (
     EntityUpdate,
     ExportPreset,
     GenerationSuggestionRead,
+    GraphViewCreate,
+    GraphViewRead,
     PassageCheckIssue,
     PassageCheckResponse,
+    PlanningBoardCreate,
+    PlanningBoardDetail,
+    PlanningBoardRead,
+    PlanningCardCreate,
+    PlanningCardRead,
     RelationshipRead,
     RevisionVersionRead,
     TimelineEventCreate,
@@ -399,6 +406,9 @@ class WorldService:
         category: str | None = None,
         strength: int | None = None,
         history: str | None = None,
+        stance: str | None = None,
+        color: str | None = None,
+        display_priority: int | None = None,
     ) -> RelationshipRead:
         rid = uuid4()
         now = datetime.now(UTC)
@@ -416,7 +426,8 @@ class WorldService:
         CREATE (source)-[r:RELATED_TO {
             id: $r_id, world_id: $w_id, relation_type: $relation_type,
             notes: $notes, category: $category, strength: $strength,
-            history: $history, created_at: $created_at
+            history: $history, stance: $stance, color: $color,
+            display_priority: $display_priority, created_at: $created_at
         }]->(target)
         WITH properties(r) AS rel_props,
              properties(source) AS source_props,
@@ -435,6 +446,9 @@ class WorldService:
                 category=category,
                 strength=strength,
                 history=history,
+                stance=stance,
+                color=color,
+                display_priority=display_priority,
                 created_at=now.isoformat(),
             )
             record = result.single()
@@ -580,6 +594,10 @@ class WorldService:
                     details.append(f"category: {relationship.category}")
                 if relationship.strength:
                     details.append(f"strength: {relationship.strength}/5")
+                if relationship.stance:
+                    details.append(f"stance: {relationship.stance}")
+                if relationship.display_priority is not None:
+                    details.append(f"priority: {relationship.display_priority}")
                 if details:
                     lines.append(f"  - {'; '.join(details)}")
                 if relationship.history:
@@ -596,6 +614,12 @@ class WorldService:
                     lines.append(f"  - Cause: {event.causes}")
                 if event.consequences:
                     lines.append(f"  - Consequence: {event.consequences}")
+                if event.date_label or event.era_label:
+                    lines.append(
+                        f"  - When: {' / '.join([part for part in (event.era_label, event.date_label) if part])}"
+                    )
+                if event.depends_on:
+                    lines.append(f"  - Depends on: {', '.join(str(item) for item in event.depends_on)}")
             lines.append("")
 
         return "\n".join(lines).strip() + "\n"
@@ -992,7 +1016,9 @@ class WorldService:
             id: $event_id, world_id: $w_id, title: $title,
             event_order: $event_order, description: $description,
             participants_json: $participants_json, causes: $causes,
-            consequences: $consequences, created_at: $created_at
+            consequences: $consequences, created_at: $created_at,
+            date_label: $date_label, era_label: $era_label,
+            depends_on_json: $depends_on_json
         })
         RETURN properties(t) AS props
         """
@@ -1007,6 +1033,9 @@ class WorldService:
                 participants_json=json.dumps([str(item) for item in data.participants]),
                 causes=data.causes,
                 consequences=data.consequences,
+                date_label=data.date_label,
+                era_label=data.era_label,
+                depends_on_json=json.dumps([str(item) for item in data.depends_on]),
                 created_at=now.isoformat(),
             )
             record = result.single()
@@ -1028,6 +1057,174 @@ class WorldService:
         with self._driver.session() as session:
             result = session.run(query, w_id=str(world_id))
             return [self._timeline_event_from_record(record) for record in result]
+
+    def create_graph_view(self, world_id: UUID, data: GraphViewCreate) -> GraphViewRead:
+        if not self._get_record(world_id):
+            raise ValueError("World not found")
+        view_id = uuid4()
+        now = datetime.now(UTC)
+        query = """
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        CREATE (w)<-[:BELONGS_TO]-(v:GraphView {
+            id: $view_id, world_id: $w_id, name: $name,
+            layout_mode: $layout_mode, filters_json: $filters_json,
+            camera_json: $camera_json, node_positions_json: $node_positions_json,
+            created_at: $created_at, updated_at: $updated_at
+        })
+        RETURN properties(v) AS props
+        """
+        with self._driver.session() as session:
+            result = session.run(
+                query,
+                w_id=str(world_id),
+                view_id=str(view_id),
+                name=data.name,
+                layout_mode=data.layout_mode,
+                filters_json=json.dumps(data.filters, sort_keys=True),
+                camera_json=data.camera.model_dump_json(),
+                node_positions_json=json.dumps(data.node_positions, sort_keys=True),
+                created_at=now.isoformat(),
+                updated_at=now.isoformat(),
+            )
+            record = result.single()
+            if not record:
+                raise ValueError("World not found")
+            return self._graph_view_from_record(record)
+
+    def list_graph_views(self, world_id: UUID) -> list[GraphViewRead] | None:
+        if not self._get_record(world_id):
+            return None
+        query = """
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        MATCH (w)<-[belongs]-(v)
+        WHERE type(belongs) = "BELONGS_TO" AND "GraphView" IN labels(v)
+        RETURN properties(v) AS props
+        ORDER BY props.updated_at DESC
+        """
+        with self._driver.session() as session:
+            result = session.run(query, w_id=str(world_id))
+            return [self._graph_view_from_record(record) for record in result]
+
+    def delete_graph_view(self, world_id: UUID, view_id: UUID) -> bool | None:
+        if not self._get_record(world_id):
+            return None
+        query = """
+        MATCH (v)
+        WHERE "GraphView" IN labels(v)
+          AND properties(v).world_id = $w_id
+          AND properties(v).id = $view_id
+        DETACH DELETE v
+        RETURN count(v) AS deleted
+        """
+        with self._driver.session() as session:
+            result = session.run(query, w_id=str(world_id), view_id=str(view_id))
+            record = result.single()
+            return bool(record and record["deleted"])
+
+    def create_planning_board(self, world_id: UUID, data: PlanningBoardCreate) -> PlanningBoardRead:
+        if not self._get_record(world_id):
+            raise ValueError("World not found")
+        board_id = uuid4()
+        now = datetime.now(UTC)
+        query = """
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        CREATE (w)<-[:BELONGS_TO]-(b:PlanningBoard {
+            id: $board_id, world_id: $w_id, name: $name,
+            board_type: $board_type, created_at: $created_at
+        })
+        RETURN properties(b) AS props
+        """
+        with self._driver.session() as session:
+            result = session.run(
+                query,
+                w_id=str(world_id),
+                board_id=str(board_id),
+                name=data.name,
+                board_type=data.board_type,
+                created_at=now.isoformat(),
+            )
+            record = result.single()
+            if not record:
+                raise ValueError("World not found")
+            return self._planning_board_from_record(record)
+
+    def list_planning_boards(self, world_id: UUID) -> list[PlanningBoardDetail] | None:
+        if not self._get_record(world_id):
+            return None
+        query = """
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        MATCH (w)<-[belongs]-(b)
+        WHERE type(belongs) = "BELONGS_TO" AND "PlanningBoard" IN labels(b)
+        RETURN properties(b) AS props
+        ORDER BY props.created_at ASC
+        """
+        with self._driver.session() as session:
+            boards = [self._planning_board_from_record(record) for record in session.run(query, w_id=str(world_id))]
+        return [
+            PlanningBoardDetail(**board.model_dump(), cards=self.list_planning_cards(world_id, board.id) or [])
+            for board in boards
+        ]
+
+    def create_planning_card(
+        self, world_id: UUID, board_id: UUID, data: PlanningCardCreate
+    ) -> PlanningCardRead:
+        if not self._get_record(world_id):
+            raise ValueError("World not found")
+        card_id = uuid4()
+        now = datetime.now(UTC)
+        query = """
+        MATCH (b)
+        WHERE "PlanningBoard" IN labels(b)
+          AND properties(b).world_id = $w_id
+          AND properties(b).id = $board_id
+        CREATE (b)<-[:BELONGS_TO]-(c:PlanningCard {
+            id: $card_id, board_id: $board_id, world_id: $w_id,
+            title: $title, description: $description, lane: $lane,
+            position: $position, entity_links_json: $entity_links_json,
+            relationship_links_json: $relationship_links_json,
+            timeline_event_links_json: $timeline_event_links_json,
+            created_at: $created_at
+        })
+        RETURN properties(c) AS props
+        """
+        with self._driver.session() as session:
+            result = session.run(
+                query,
+                w_id=str(world_id),
+                board_id=str(board_id),
+                card_id=str(card_id),
+                title=data.title,
+                description=data.description,
+                lane=data.lane,
+                position=data.position,
+                entity_links_json=json.dumps([str(item) for item in data.entity_links]),
+                relationship_links_json=json.dumps([str(item) for item in data.relationship_links]),
+                timeline_event_links_json=json.dumps([str(item) for item in data.timeline_event_links]),
+                created_at=now.isoformat(),
+            )
+            record = result.single()
+            if not record:
+                raise ValueError("Board not found")
+            return self._planning_card_from_record(record)
+
+    def list_planning_cards(self, world_id: UUID, board_id: UUID) -> list[PlanningCardRead] | None:
+        query = """
+        MATCH (b)<-[belongs]-(c)
+        WHERE type(belongs) = "BELONGS_TO"
+          AND "PlanningBoard" IN labels(b)
+          AND "PlanningCard" IN labels(c)
+          AND properties(b).world_id = $w_id
+          AND properties(b).id = $board_id
+        RETURN properties(c) AS props
+        ORDER BY props.lane ASC, props.position ASC, props.created_at ASC
+        """
+        with self._driver.session() as session:
+            result = session.run(query, w_id=str(world_id), board_id=str(board_id))
+            return [self._planning_card_from_record(record) for record in result]
 
     def list_revisions(
         self, world_id: UUID, entity_id: UUID | None = None
@@ -1232,6 +1429,9 @@ class WorldService:
                 category=rel_props.get("category"),
                 strength=rel_props.get("strength"),
                 history=rel_props.get("history"),
+                stance=rel_props.get("stance"),
+                color=rel_props.get("color"),
+                display_priority=rel_props.get("display_priority"),
                 created_at=datetime.fromisoformat(rel_props["created_at"]),
             )
         return RelationshipRead(
@@ -1246,6 +1446,9 @@ class WorldService:
             category=record.get("category"),
             strength=record.get("strength"),
             history=record.get("history"),
+            stance=record.get("stance"),
+            color=record.get("color"),
+            display_priority=record.get("display_priority"),
             created_at=datetime.fromisoformat(record["created_at"]),
         )
 
@@ -1278,6 +1481,60 @@ class WorldService:
             ],
             causes=props.get("causes"),
             consequences=props.get("consequences"),
+            date_label=props.get("date_label"),
+            era_label=props.get("era_label"),
+            depends_on=[
+                UUID(item)
+                for item in json.loads(props.get("depends_on_json") or "[]")
+            ],
+            created_at=datetime.fromisoformat(props["created_at"]),
+        )
+
+    @staticmethod
+    def _graph_view_from_record(record) -> GraphViewRead:  # noqa: ANN001
+        props = record.get("props", record)
+        camera = json.loads(props.get("camera_json") or "{}")
+        return GraphViewRead(
+            id=UUID(props["id"]),
+            world_id=UUID(props["world_id"]),
+            name=props["name"],
+            layout_mode=props.get("layout_mode", "manual"),
+            filters=json.loads(props.get("filters_json") or "{}"),
+            camera=camera,
+            node_positions=json.loads(props.get("node_positions_json") or "{}"),
+            created_at=datetime.fromisoformat(props["created_at"]),
+            updated_at=datetime.fromisoformat(props.get("updated_at") or props["created_at"]),
+        )
+
+    @staticmethod
+    def _planning_board_from_record(record) -> PlanningBoardRead:  # noqa: ANN001
+        props = record.get("props", record)
+        return PlanningBoardRead(
+            id=UUID(props["id"]),
+            world_id=UUID(props["world_id"]),
+            name=props["name"],
+            board_type=props.get("board_type", "plot_thread"),
+            created_at=datetime.fromisoformat(props["created_at"]),
+        )
+
+    @staticmethod
+    def _planning_card_from_record(record) -> PlanningCardRead:  # noqa: ANN001
+        props = record.get("props", record)
+        return PlanningCardRead(
+            id=UUID(props["id"]),
+            board_id=UUID(props["board_id"]),
+            world_id=UUID(props["world_id"]),
+            title=props["title"],
+            description=props.get("description") or "",
+            lane=props.get("lane") or "Backlog",
+            position=int(props.get("position") or 0),
+            entity_links=[UUID(item) for item in json.loads(props.get("entity_links_json") or "[]")],
+            relationship_links=[
+                UUID(item) for item in json.loads(props.get("relationship_links_json") or "[]")
+            ],
+            timeline_event_links=[
+                UUID(item) for item in json.loads(props.get("timeline_event_links_json") or "[]")
+            ],
             created_at=datetime.fromisoformat(props["created_at"]),
         )
 
@@ -1361,6 +1618,12 @@ class WorldService:
                 lines.extend([f"- Cause: {event.causes}"])
             if event.consequences:
                 lines.extend([f"- Consequence: {event.consequences}"])
+            if event.date_label or event.era_label:
+                lines.extend(
+                    [f"- When: {' / '.join([part for part in (event.era_label, event.date_label) if part])}"]
+                )
+            if event.depends_on:
+                lines.extend([f"- Depends on: {', '.join(str(item) for item in event.depends_on)}"])
             lines.append("")
         return "\n".join(lines).strip() + "\n"
 
