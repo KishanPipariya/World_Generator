@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Globe2, Clock, Sparkles, Trash2 } from 'lucide-react';
+import { Plus, Globe2, Clock, Sparkles, Trash2, BookOpen } from 'lucide-react';
 import { createDemoWorld, deleteWorld, fetchWorlds, type World } from '../lib/api';
 import './Worlds.css';
 
@@ -108,6 +108,12 @@ const WorldsList = () => {
                 <Clock size={16} />
                 <span>{new Date(world.created_at).toLocaleDateString()}</span>
               </Link>
+              <div className="world-card-actions">
+                <Link to={`/wiki/${world.id}`} className="world-card-action">
+                  <BookOpen size={16} />
+                  <span>View wiki</span>
+                </Link>
+              </div>
             </article>
           ))}
         </div>

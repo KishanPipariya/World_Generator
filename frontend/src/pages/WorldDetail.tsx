@@ -871,6 +871,10 @@ const WorldDetail = () => {
             <ClipboardCheck size={16} />
             Report
           </button>
+          <Link to={`/wiki/${world.id}`} className="btn btn-secondary">
+            <BookOpen size={16} />
+            Wiki
+          </Link>
           <button className="btn btn-secondary" onClick={handlePreviewExport} disabled={busy}>
             <FileText size={16} />
             Preview

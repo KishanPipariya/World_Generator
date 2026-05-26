@@ -158,3 +158,20 @@
   padding-top: 1rem;
   border-top: 1px solid var(--border-color);
 }
+
+.world-card-actions {
+  display: flex;
+}
+
+.world-card-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #bfdbfe;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.world-card-action:hover {
+  color: var(--text-primary);
+}
