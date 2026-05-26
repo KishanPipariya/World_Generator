@@ -307,3 +307,41 @@ class PassageCheckResponse(BaseModel):
     world_id: UUID
     summary: str
     issues: list[PassageCheckIssue]
+
+
+class DraftCheckHistoryItem(BaseModel):
+    checked_at: datetime
+    summary: str
+    issues: list[PassageCheckIssue]
+
+
+class DraftCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    body: str = Field(..., min_length=1, max_length=50000)
+    status: Literal["draft", "revising", "ready", "archived"] = "draft"
+    linked_entity_ids: list[UUID] = Field(default_factory=list)
+    linked_relationship_ids: list[UUID] = Field(default_factory=list)
+    linked_timeline_event_ids: list[UUID] = Field(default_factory=list)
+
+
+class DraftUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    body: str | None = Field(default=None, min_length=1, max_length=50000)
+    status: Literal["draft", "revising", "ready", "archived"] | None = None
+    linked_entity_ids: list[UUID] | None = None
+    linked_relationship_ids: list[UUID] | None = None
+    linked_timeline_event_ids: list[UUID] | None = None
+
+
+class DraftRead(DraftCreate):
+    id: UUID
+    world_id: UUID
+    check_history: list[DraftCheckHistoryItem] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class DraftListResponse(BaseModel):
+    drafts: list[DraftRead]

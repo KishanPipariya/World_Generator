@@ -12,6 +12,10 @@ from app.schemas.world import (
     ConsistencyIssue,
     ConsistencyReportResponse,
     DemoWorldResponse,
+    DraftCheckHistoryItem,
+    DraftCreate,
+    DraftRead,
+    DraftUpdate,
     EntityRead,
     EntityUpdate,
     ExportPreset,
@@ -1324,6 +1328,180 @@ class WorldService:
             summary = f"Passage check found {len(issues)} item(s) to review."
         return PassageCheckResponse(world_id=world_id, summary=summary, issues=issues)
 
+    def create_draft(self, world_id: UUID, data: DraftCreate) -> DraftRead:
+        if not self._get_record(world_id):
+            raise ValueError("World not found")
+        draft_id = uuid4()
+        now = datetime.now(UTC)
+        query = """
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        CREATE (w)<-[:BELONGS_TO]-(d:DraftPassage {
+            id: $draft_id, world_id: $w_id, title: $title, body: $body,
+            status: $status, linked_entity_ids_json: $linked_entity_ids_json,
+            linked_relationship_ids_json: $linked_relationship_ids_json,
+            linked_timeline_event_ids_json: $linked_timeline_event_ids_json,
+            check_history_json: $check_history_json,
+            created_at: $created_at, updated_at: $updated_at
+        })
+        RETURN properties(d) AS props
+        """
+        with self._driver.session() as session:
+            result = session.run(
+                query,
+                w_id=str(world_id),
+                draft_id=str(draft_id),
+                title=data.title,
+                body=data.body,
+                status=data.status,
+                linked_entity_ids_json=json.dumps([str(item) for item in data.linked_entity_ids]),
+                linked_relationship_ids_json=json.dumps(
+                    [str(item) for item in data.linked_relationship_ids]
+                ),
+                linked_timeline_event_ids_json=json.dumps(
+                    [str(item) for item in data.linked_timeline_event_ids]
+                ),
+                check_history_json="[]",
+                created_at=now.isoformat(),
+                updated_at=now.isoformat(),
+            )
+            record = result.single()
+            if not record:
+                raise ValueError("World not found")
+            return self._draft_from_record(record)
+
+    def list_drafts(self, world_id: UUID) -> list[DraftRead] | None:
+        if not self._get_record(world_id):
+            return None
+        query = """
+        MATCH (w)
+        WHERE "World" IN labels(w) AND properties(w).id = $w_id
+        MATCH (w)<-[belongs]-(d)
+        WHERE type(belongs) = "BELONGS_TO" AND "DraftPassage" IN labels(d)
+        RETURN properties(d) AS props
+        ORDER BY props.updated_at DESC, props.created_at DESC
+        """
+        with self._driver.session() as session:
+            result = session.run(query, w_id=str(world_id))
+            return [self._draft_from_record(record) for record in result]
+
+    def get_draft(self, world_id: UUID, draft_id: UUID) -> DraftRead | None:
+        query = """
+        MATCH (d)
+        WHERE "DraftPassage" IN labels(d)
+          AND properties(d).world_id = $w_id
+          AND properties(d).id = $draft_id
+        RETURN properties(d) AS props
+        """
+        with self._driver.session() as session:
+            result = session.run(query, w_id=str(world_id), draft_id=str(draft_id))
+            record = result.single()
+            return self._draft_from_record(record) if record else None
+
+    def update_draft(self, world_id: UUID, draft_id: UUID, data: DraftUpdate) -> DraftRead | None:
+        updates = data.model_dump(exclude_unset=True)
+        if not updates:
+            return self.get_draft(world_id, draft_id)
+        now = datetime.now(UTC)
+        query = """
+        MATCH (d)
+        WHERE "DraftPassage" IN labels(d)
+          AND properties(d).world_id = $w_id
+          AND properties(d).id = $draft_id
+        SET d.title = coalesce($title, d.title),
+            d.body = coalesce($body, d.body),
+            d.status = coalesce($status, d.status),
+            d.linked_entity_ids_json = coalesce($linked_entity_ids_json, d.linked_entity_ids_json),
+            d.linked_relationship_ids_json = coalesce($linked_relationship_ids_json, d.linked_relationship_ids_json),
+            d.linked_timeline_event_ids_json = coalesce($linked_timeline_event_ids_json, d.linked_timeline_event_ids_json),
+            d.updated_at = $updated_at
+        RETURN properties(d) AS props
+        """
+        with self._driver.session() as session:
+            result = session.run(
+                query,
+                w_id=str(world_id),
+                draft_id=str(draft_id),
+                title=updates.get("title"),
+                body=updates.get("body"),
+                status=updates.get("status"),
+                linked_entity_ids_json=(
+                    json.dumps([str(item) for item in updates["linked_entity_ids"]])
+                    if "linked_entity_ids" in updates
+                    else None
+                ),
+                linked_relationship_ids_json=(
+                    json.dumps([str(item) for item in updates["linked_relationship_ids"]])
+                    if "linked_relationship_ids" in updates
+                    else None
+                ),
+                linked_timeline_event_ids_json=(
+                    json.dumps([str(item) for item in updates["linked_timeline_event_ids"]])
+                    if "linked_timeline_event_ids" in updates
+                    else None
+                ),
+                updated_at=now.isoformat(),
+            )
+            record = result.single()
+            return self._draft_from_record(record) if record else None
+
+    def delete_draft(self, world_id: UUID, draft_id: UUID) -> bool | None:
+        if not self._get_record(world_id):
+            return None
+        query = """
+        MATCH (d)
+        WHERE "DraftPassage" IN labels(d)
+          AND properties(d).world_id = $w_id
+          AND properties(d).id = $draft_id
+        DETACH DELETE d
+        RETURN count(d) AS deleted
+        """
+        with self._driver.session() as session:
+            result = session.run(query, w_id=str(world_id), draft_id=str(draft_id))
+            record = result.single()
+            return bool(record and record["deleted"])
+
+    def check_draft(self, world_id: UUID, draft_id: UUID) -> PassageCheckResponse | None:
+        draft = self.get_draft(world_id, draft_id)
+        if not draft:
+            return None
+        report = self.passage_check(world_id, draft.body)
+        if not report:
+            return None
+        history = [
+            {
+                "checked_at": item.checked_at.isoformat(),
+                "summary": item.summary,
+                "issues": [issue.model_dump(mode="json") for issue in item.issues],
+            }
+            for item in draft.check_history
+        ]
+        history.append(
+            {
+                "checked_at": datetime.now(UTC).isoformat(),
+                "summary": report.summary,
+                "issues": [issue.model_dump(mode="json") for issue in report.issues],
+            }
+        )
+        query = """
+        MATCH (d)
+        WHERE "DraftPassage" IN labels(d)
+          AND properties(d).world_id = $w_id
+          AND properties(d).id = $draft_id
+        SET d.check_history_json = $check_history_json,
+            d.updated_at = $updated_at
+        RETURN properties(d) AS props
+        """
+        with self._driver.session() as session:
+            session.run(
+                query,
+                w_id=str(world_id),
+                draft_id=str(draft_id),
+                check_history_json=json.dumps(history),
+                updated_at=datetime.now(UTC).isoformat(),
+            )
+        return report
+
     def _get_suggestion(
         self, world_id: UUID, suggestion_id: UUID
     ) -> GenerationSuggestionRead | None:
@@ -1554,6 +1732,33 @@ class WorldService:
         )
 
     @staticmethod
+    def _draft_from_record(record) -> DraftRead:  # noqa: ANN001
+        props = record.get("props", record)
+        return DraftRead(
+            id=UUID(props["id"]),
+            world_id=UUID(props["world_id"]),
+            title=props["title"],
+            body=props["body"],
+            status=props.get("status", "draft"),
+            linked_entity_ids=[
+                UUID(item) for item in json.loads(props.get("linked_entity_ids_json") or "[]")
+            ],
+            linked_relationship_ids=[
+                UUID(item)
+                for item in json.loads(props.get("linked_relationship_ids_json") or "[]")
+            ],
+            linked_timeline_event_ids=[
+                UUID(item)
+                for item in json.loads(props.get("linked_timeline_event_ids_json") or "[]")
+            ],
+            check_history=WorldService._decode_draft_check_history(
+                props.get("check_history_json")
+            ),
+            created_at=datetime.fromisoformat(props["created_at"]),
+            updated_at=datetime.fromisoformat(props.get("updated_at") or props["created_at"]),
+        )
+
+    @staticmethod
     def _world_from_props(props: dict[str, object]) -> _WorldRecord:
         return _WorldRecord(
             id=UUID(str(props["id"])),
@@ -1592,6 +1797,33 @@ class WorldService:
         if not isinstance(parsed, dict):
             return {}
         return {str(key): str(value) for key, value in parsed.items()}
+
+    @staticmethod
+    def _decode_draft_check_history(raw: object) -> list[DraftCheckHistoryItem]:
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(str(raw))
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(parsed, list):
+            return []
+        history: list[DraftCheckHistoryItem] = []
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            issues = []
+            for issue in item.get("issues", []):
+                if isinstance(issue, dict):
+                    issues.append(PassageCheckIssue(**issue))
+            history.append(
+                DraftCheckHistoryItem(
+                    checked_at=datetime.fromisoformat(str(item["checked_at"])),
+                    summary=str(item.get("summary", "")),
+                    issues=issues,
+                )
+            )
+        return history
 
     @staticmethod
     def _export_label(preset: str) -> str:

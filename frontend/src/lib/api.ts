@@ -157,6 +157,26 @@ export interface PassageCheck {
   issues: PassageCheckIssue[];
 }
 
+export interface DraftCheckHistoryItem {
+  checked_at: string;
+  summary: string;
+  issues: PassageCheckIssue[];
+}
+
+export interface DraftPassage {
+  id: string;
+  world_id: string;
+  title: string;
+  body: string;
+  status: 'draft' | 'revising' | 'ready' | 'archived';
+  linked_entity_ids: string[];
+  linked_relationship_ids: string[];
+  linked_timeline_event_ids: string[];
+  check_history: DraftCheckHistoryItem[];
+  created_at: string;
+  updated_at: string;
+}
+
 export interface HealthStatus {
   status: string;
   llm: {
@@ -361,6 +381,43 @@ export const restoreRevision = async (worldId: string, revisionId: string): Prom
 
 export const checkPassage = async (worldId: string, passage: string): Promise<PassageCheck> => {
   const response = await api.post(`/worlds/${worldId}/passage-check`, { passage });
+  return response.data;
+};
+
+export const fetchDrafts = async (worldId: string): Promise<DraftPassage[]> => {
+  const response = await api.get(`/worlds/${worldId}/drafts`);
+  return response.data.drafts;
+};
+
+export const fetchDraft = async (worldId: string, draftId: string): Promise<DraftPassage> => {
+  const response = await api.get(`/worlds/${worldId}/drafts/${draftId}`);
+  return response.data;
+};
+
+export const createDraft = async (
+  worldId: string,
+  draft: Pick<DraftPassage, 'title' | 'body'> &
+    Partial<Pick<DraftPassage, 'status' | 'linked_entity_ids' | 'linked_relationship_ids' | 'linked_timeline_event_ids'>>,
+): Promise<DraftPassage> => {
+  const response = await api.post(`/worlds/${worldId}/drafts`, draft);
+  return response.data;
+};
+
+export const updateDraft = async (
+  worldId: string,
+  draftId: string,
+  draft: Partial<Pick<DraftPassage, 'title' | 'body' | 'status' | 'linked_entity_ids' | 'linked_relationship_ids' | 'linked_timeline_event_ids'>>,
+): Promise<DraftPassage> => {
+  const response = await api.patch(`/worlds/${worldId}/drafts/${draftId}`, draft);
+  return response.data;
+};
+
+export const deleteDraft = async (worldId: string, draftId: string): Promise<void> => {
+  await api.delete(`/worlds/${worldId}/drafts/${draftId}`);
+};
+
+export const checkDraft = async (worldId: string, draftId: string): Promise<PassageCheck> => {
+  const response = await api.post(`/worlds/${worldId}/drafts/${draftId}/check`);
   return response.data;
 };
 

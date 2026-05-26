@@ -79,6 +79,24 @@ class _FakeSession:
             }
             self.db["timeline"][kwargs["event_id"]] = record
             return _FakeResult([{"props": record}])
+        if "CREATE (w)<-[:BELONGS_TO]-(d:DraftPassage" in query:
+            if kwargs["w_id"] not in self.db["worlds"]:
+                return _FakeResult([])
+            record = {
+                "id": kwargs["draft_id"],
+                "world_id": kwargs["w_id"],
+                "title": kwargs["title"],
+                "body": kwargs["body"],
+                "status": kwargs["status"],
+                "linked_entity_ids_json": kwargs["linked_entity_ids_json"],
+                "linked_relationship_ids_json": kwargs["linked_relationship_ids_json"],
+                "linked_timeline_event_ids_json": kwargs["linked_timeline_event_ids_json"],
+                "check_history_json": kwargs["check_history_json"],
+                "created_at": kwargs["created_at"],
+                "updated_at": kwargs["updated_at"],
+            }
+            self.db["drafts"][kwargs["draft_id"]] = record
+            return _FakeResult([{"props": record}])
         if "CREATE (w)<-[:BELONGS_TO]-(v:GraphView" in query:
             if kwargs["w_id"] not in self.db["worlds"]:
                 return _FakeResult([])
@@ -180,6 +198,29 @@ class _FakeSession:
                 record["status"] = kwargs["status"]
                 return _FakeResult([{"props": record}])
             return _FakeResult([])
+        if "SET d.title" in query:
+            record = self.db["drafts"].get(kwargs["draft_id"])
+            if record and record["world_id"] == kwargs["w_id"]:
+                for field in ("title", "body", "status"):
+                    if kwargs[field] is not None:
+                        record[field] = kwargs[field]
+                for field in (
+                    "linked_entity_ids_json",
+                    "linked_relationship_ids_json",
+                    "linked_timeline_event_ids_json",
+                ):
+                    if kwargs[field] is not None:
+                        record[field] = kwargs[field]
+                record["updated_at"] = kwargs["updated_at"]
+                return _FakeResult([{"props": record}])
+            return _FakeResult([])
+        if "SET d.check_history_json" in query:
+            record = self.db["drafts"].get(kwargs["draft_id"])
+            if record and record["world_id"] == kwargs["w_id"]:
+                record["check_history_json"] = kwargs["check_history_json"]
+                record["updated_at"] = kwargs["updated_at"]
+                return _FakeResult([{"props": record}])
+            return _FakeResult([])
         if "DETACH DELETE w" in query:
             world = self.db["worlds"].pop(kwargs["w_id"], None)
             if not world:
@@ -227,6 +268,12 @@ class _FakeSession:
                 del self.db["graph_views"][kwargs["view_id"]]
                 return _FakeResult([{"deleted": 1}])
             return _FakeResult([{"deleted": 0}])
+        if "DETACH DELETE d" in query:
+            record = self.db["drafts"].get(kwargs["draft_id"])
+            if record and record["world_id"] == kwargs["w_id"]:
+                del self.db["drafts"][kwargs["draft_id"]]
+                return _FakeResult([{"deleted": 1}])
+            return _FakeResult([{"deleted": 0}])
         if "id" in kwargs and "MATCH (w)<-[belongs]-(e)" in query:
             return _FakeResult(
                 [v for v in self.db["entities"].values() if v["world_id"] == kwargs["id"]]
@@ -254,6 +301,13 @@ class _FakeSession:
         if '"TimelineEvent" IN labels' in query:
             return _FakeResult(
                 [{"props": v} for v in self.db["timeline"].values() if v["world_id"] == kwargs["w_id"]]
+            )
+        if '"DraftPassage" IN labels' in query:
+            if "draft_id" in kwargs:
+                record = self.db["drafts"].get(kwargs["draft_id"])
+                return _FakeResult([{"props": record}] if record and record["world_id"] == kwargs["w_id"] else [])
+            return _FakeResult(
+                [{"props": v} for v in self.db["drafts"].values() if v["world_id"] == kwargs["w_id"]]
             )
         if '"GraphView" IN labels' in query:
             return _FakeResult(
@@ -297,6 +351,7 @@ class _FakeDriver:
             "graph_views": {},
             "planning_boards": {},
             "planning_cards": {},
+            "drafts": {},
         }
         
     def session(self):
@@ -609,6 +664,60 @@ def test_timeline_revisions_passage_and_export_presets(client: TestClient) -> No
     assert exported.status_code == 200
     assert exported.json()["preset"] == "timeline_only"
     assert "# Roadmap Timeline" in exported.json()["content"]
+
+
+def test_saved_draft_crud_and_check_history(client: TestClient) -> None:
+    world = client.post("/worlds", json={"title": "Draft Desk", "tone": "noir"}).json()
+    wid = world["id"]
+    entity = client.post(
+        f"/worlds/{wid}/entities",
+        json={
+            "name": "Asha",
+            "entity_type": "Character",
+            "description": "Asha is the only detective who knows the bell code.",
+        },
+    ).json()
+
+    created = client.post(
+        f"/worlds/{wid}/drafts",
+        json={
+            "title": "Chapter 1",
+            "body": "Asha entered the station. She was the only one listening.",
+            "linked_entity_ids": [entity["id"]],
+        },
+    )
+    assert created.status_code == 201
+    draft = created.json()
+    assert draft["status"] == "draft"
+    assert draft["linked_entity_ids"] == [entity["id"]]
+    assert draft["check_history"] == []
+
+    updated = client.patch(
+        f"/worlds/{wid}/drafts/{draft['id']}",
+        json={"status": "revising", "title": "Opening Scene"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["title"] == "Opening Scene"
+    assert updated.json()["status"] == "revising"
+
+    checked = client.post(f"/worlds/{wid}/drafts/{draft['id']}/check")
+    assert checked.status_code == 200
+    assert checked.json()["summary"] == "Passage check found 2 item(s) to review."
+
+    fetched = client.get(f"/worlds/{wid}/drafts/{draft['id']}")
+    assert fetched.status_code == 200
+    history = fetched.json()["check_history"]
+    assert len(history) == 1
+    assert history[0]["summary"] == checked.json()["summary"]
+    assert {issue["code"] for issue in history[0]["issues"]} == {"tone_drift", "canon_absolute"}
+
+    listed = client.get(f"/worlds/{wid}/drafts")
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()["drafts"]] == [draft["id"]]
+
+    deleted = client.delete(f"/worlds/{wid}/drafts/{draft['id']}")
+    assert deleted.status_code == 204
+    assert client.get(f"/worlds/{wid}/drafts").json()["drafts"] == []
 
 
 def test_visual_planning_resources(client: TestClient) -> None:
