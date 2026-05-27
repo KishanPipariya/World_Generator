@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -50,6 +49,15 @@ from app.schemas.world import (
     WorldCreate,
     WorldRead,
 )
+from app.services.consistency import (
+    consistency_issue_fingerprint,
+    consistency_issue_target_type,
+    consistency_score,
+    consistency_summary,
+    detect_consistency_issues,
+)
+from app.services.entity_types import display_entity_type
+from app.services.markdown_export import build_markdown_export
 
 
 class WorldLLM(Protocol):
@@ -522,145 +530,38 @@ class WorldService:
         entities = self.list_entities(world_id) or []
         relationships = self.list_relationships(world_id) or []
         timeline = self.list_timeline_events(world_id) or []
-
-        if preset == "player_handout":
-            lore_notes = self.list_lore_notes(world_id) or []
-            return self._campaign_player_handout_markdown(rec.title, entities, lore_notes)
-        if preset == "session_brief":
-            sessions = self.list_campaign_sessions(world_id) or []
-            lore_notes = self.list_lore_notes(world_id) or []
-            clocks = self.list_faction_clocks(world_id) or []
-            return self._campaign_session_brief_markdown(rec.title, sessions, lore_notes, clocks)
-        if preset == "dm_campaign_brief":
-            sessions = self.list_campaign_sessions(world_id) or []
-            lore_notes = self.list_lore_notes(world_id) or []
-            clocks = self.list_faction_clocks(world_id) or []
-            return self._campaign_dm_brief_markdown(rec.title, sessions, lore_notes, clocks)
-
-        entity_types_by_preset = {
-            "character_dossier": {"Character"},
-            "faction_brief": {"Faction"},
-            "location_gazetteer": {"Location"},
+        lore_presets = {
+            "player_handout",
+            "session_brief",
+            "dm_campaign_brief",
         }
-        if preset in entity_types_by_preset:
-            allowed = entity_types_by_preset[preset]
-            entities = [
-                entity for entity in entities if self._display_entity_type(entity.entity_type) in allowed
-            ]
-            allowed_ids = {entity.id for entity in entities}
-            relationships = [
-                relationship
-                for relationship in relationships
-                if relationship.source_entity_id in allowed_ids or relationship.target_entity_id in allowed_ids
-            ]
+        campaign_brief_presets = {"session_brief", "dm_campaign_brief"}
+        lore_notes = (self.list_lore_notes(world_id) or []) if preset in lore_presets else None
+        sessions = (
+            (self.list_campaign_sessions(world_id) or [])
+            if preset in campaign_brief_presets
+            else None
+        )
+        clocks = (
+            (self.list_faction_clocks(world_id) or [])
+            if preset in campaign_brief_presets
+            else None
+        )
 
-        lines = [
-            f"# {rec.title}",
-            "",
-            f"> {self._export_label(preset)}.",
-            "",
-            "## World Metadata",
-            "",
-            f"- Created: {rec.created_at.date().isoformat()}",
-            f"- Entities: {len(entities)}",
-            f"- Relationships: {len(relationships)}",
-        ]
-        if rec.tone:
-            lines.append(f"- Tone: {rec.tone}")
-        if rec.seed:
-            lines.append(f"- Seed: {rec.seed}")
-        lines.append("")
-        if rec.era_notes:
-            lines.extend(["## Era Notes", "", rec.era_notes, ""])
-
-        if preset == "timeline_only":
-            return self._timeline_markdown(rec.title, timeline)
-
-        lines.extend(["## Entities", ""])
-        if not entities:
-            lines.extend(["No saved entities yet.", ""])
-        else:
-            for entity_type in ("Character", "Location", "Faction", "Concept", "Event", "Other"):
-                grouped = [
-                    entity
-                    for entity in entities
-                    if self._display_entity_type(entity.entity_type) == entity_type
-                ]
-                if not grouped:
-                    continue
-                lines.extend([f"### {entity_type}", ""])
-                for entity in grouped:
-                    related = [
-                        relationship
-                        for relationship in relationships
-                        if relationship.source_entity_id == entity.id
-                        or relationship.target_entity_id == entity.id
-                    ]
-                    lines.extend([f"#### {entity.name}", "", entity.description, ""])
-                    if entity.structured_fields:
-                        lines.extend(["Structured fields:", ""])
-                        for key, value in entity.structured_fields.items():
-                            if value:
-                                lines.append(f"- {key.replace('_', ' ').title()}: {value}")
-                        lines.append("")
-                    if related:
-                        lines.extend(["Related:", ""])
-                        for relationship in related:
-                            if relationship.source_entity_id == entity.id:
-                                other = relationship.target_entity_name
-                                rel = relationship.relation_type
-                            else:
-                                other = relationship.source_entity_name
-                                rel = f"is {relationship.relation_type} by"
-                            lines.append(f"- {rel} [[{other}]]")
-                        lines.append("")
-
-        lines.extend(["## Relationships", ""])
-        if not relationships:
-            lines.extend(["No relationships yet.", ""])
-        else:
-            for relationship in relationships:
-                lines.append(
-                    f"- [[{relationship.source_entity_name}]] "
-                    f"{relationship.relation_type} "
-                    f"[[{relationship.target_entity_name}]]"
-                )
-                if relationship.notes:
-                    lines.append(f"  - {relationship.notes}")
-                details = []
-                if relationship.category:
-                    details.append(f"category: {relationship.category}")
-                if relationship.strength:
-                    details.append(f"strength: {relationship.strength}/5")
-                if relationship.stance:
-                    details.append(f"stance: {relationship.stance}")
-                if relationship.display_priority is not None:
-                    details.append(f"priority: {relationship.display_priority}")
-                if details:
-                    lines.append(f"  - {'; '.join(details)}")
-                if relationship.history:
-                    lines.append(f"  - History: {relationship.history}")
-            lines.append("")
-
-        if timeline:
-            lines.extend(["## Timeline", ""])
-            for event in timeline:
-                lines.append(f"- {event.event_order}. {event.title}")
-                if event.description:
-                    lines.append(f"  - {event.description}")
-                if event.causes:
-                    lines.append(f"  - Cause: {event.causes}")
-                if event.consequences:
-                    lines.append(f"  - Consequence: {event.consequences}")
-                if event.date_label or event.era_label:
-                    lines.append(
-                        f"  - When: {' / '.join([part for part in (event.era_label, event.date_label) if part])}"
-                    )
-                if event.depends_on:
-                    lines.append(f"  - Depends on: {', '.join(str(item) for item in event.depends_on)}")
-            lines.append("")
-
-        return "\n".join(lines).strip() + "\n"
+        return build_markdown_export(
+            title=rec.title,
+            created_at=rec.created_at,
+            tone=rec.tone,
+            seed=rec.seed,
+            era_notes=rec.era_notes,
+            entities=entities,
+            relationships=relationships,
+            timeline=timeline,
+            preset=preset,
+            lore_notes=lore_notes,
+            sessions=sessions,
+            clocks=clocks,
+        )
 
     def consistency_report(self, world_id: UUID) -> ConsistencyReportResponse | None:
         rec = self._get_record(world_id)
@@ -668,215 +569,14 @@ class WorldService:
             return None
         entities = self.list_entities(world_id) or []
         relationships = self.list_relationships(world_id) or []
-        issues: list[ConsistencyIssue] = []
-        relationship_counts: dict[UUID, int] = {}
-        for relationship in relationships:
-            relationship_counts[relationship.source_entity_id] = (
-                relationship_counts.get(relationship.source_entity_id, 0) + 1
-            )
-            relationship_counts[relationship.target_entity_id] = (
-                relationship_counts.get(relationship.target_entity_id, 0) + 1
-            )
-
-        if not entities:
-            issues.append(
-                ConsistencyIssue(
-                    code="empty_world",
-                    severity="warning",
-                    message="No entities have been saved yet.",
-                )
-            )
-
-        name_to_entities: dict[str, list[EntityRead]] = {}
-        for entity in entities:
-            key = entity.name.strip().lower()
-            name_to_entities.setdefault(key, []).append(entity)
-            if not entity.description.strip():
-                issues.append(
-                    ConsistencyIssue(
-                        code="missing_description",
-                        severity="warning",
-                        message=f"{entity.name} is missing a description.",
-                        entity_id=entity.id,
-                    )
-                )
-            elif len(entity.description.strip()) < 40:
-                issues.append(
-                    ConsistencyIssue(
-                        code="thin_description",
-                        severity="info",
-                        message=f"{entity.name} has a short description.",
-                        entity_id=entity.id,
-                    )
-                )
-            if rec.tone and rec.tone.lower() not in entity.description.lower():
-                issues.append(
-                    ConsistencyIssue(
-                        code="tone_check",
-                        severity="info",
-                        message=f"{entity.name} may need a pass for the world's tone.",
-                        entity_id=entity.id,
-                    )
-                )
-            displayed_type = self._display_entity_type(entity.entity_type)
-            description = entity.description.strip().lower()
-            if displayed_type in {"Character", "Faction"} and not any(
-                cue in description
-                for cue in ("wants", "goal", "needs", "seeks", "fears", "secret", "conflict")
-            ):
-                issues.append(
-                    ConsistencyIssue(
-                        code="thin_lore",
-                        severity="info",
-                        message=f"{entity.name} may need clearer goals, secrets, or story pressure.",
-                        entity_id=entity.id,
-                    )
-                )
-            if displayed_type == "Location" and not any(
-                cue in description
-                for cue in ("culture", "trade", "economy", "conflict", "ruled", "hazard", "landmark")
-            ):
-                issues.append(
-                    ConsistencyIssue(
-                        code="thin_lore",
-                        severity="info",
-                        message=f"{entity.name} may need culture, economy, conflict, or landmark context.",
-                        entity_id=entity.id,
-                    )
-                )
-            if displayed_type == "Event" and not any(
-                cue in description
-                for cue in (
-                    "before",
-                    "after",
-                    "during",
-                    "year",
-                    "century",
-                    "age",
-                    "era",
-                    "season",
-                    "day",
-                    "night",
-                )
-            ):
-                issues.append(
-                    ConsistencyIssue(
-                        code="timeline_gap",
-                        severity="warning",
-                        message=f"{entity.name} is an event without clear chronology.",
-                        entity_id=entity.id,
-                    )
-                )
-
-        for duplicates in name_to_entities.values():
-            if len(duplicates) > 1:
-                for entity in duplicates:
-                    issues.append(
-                        ConsistencyIssue(
-                            code="duplicate_name",
-                            severity="error",
-                            message=f"Duplicate entity name: {entity.name}.",
-                            entity_id=entity.id,
-                        )
-                    )
-
-        for entity in entities:
-            if entity.id not in relationship_counts:
-                issues.append(
-                    ConsistencyIssue(
-                        code="orphaned_entity",
-                        severity="warning",
-                        message=f"{entity.name} has no relationships.",
-                        entity_id=entity.id,
-                    )
-                )
-            elif (
-                self._display_entity_type(entity.entity_type) in {"Character", "Faction", "Event"}
-                and relationship_counts[entity.id] == 1
-            ):
-                issues.append(
-                    ConsistencyIssue(
-                        code="missing_relationship_context",
-                        severity="info",
-                        message=f"{entity.name} has limited relationship context for canon review.",
-                        entity_id=entity.id,
-                    )
-                )
-
-        pair_types: dict[tuple[UUID, UUID, str], RelationshipRead] = {}
-        pair_stances: dict[frozenset[UUID], set[str]] = {}
-        for relationship in relationships:
-            relation_text = relationship.relation_type.strip().lower()
-            if not relationship.relation_type.strip():
-                issues.append(
-                    ConsistencyIssue(
-                        code="missing_relation_type",
-                        severity="error",
-                        message="A relationship is missing its relation type.",
-                        relationship_id=relationship.id,
-                    )
-                )
-            elif len(relation_text) < 3:
-                issues.append(
-                    ConsistencyIssue(
-                        code="weak_relationship",
-                        severity="warning",
-                        message=f"Relationship '{relationship.relation_type}' is too terse for demo review.",
-                        relationship_id=relationship.id,
-                    )
-                )
-            if not relationship.notes or len(relationship.notes.strip()) < 20:
-                issues.append(
-                    ConsistencyIssue(
-                        code="missing_relationship_context",
-                        severity="info",
-                        message=(
-                            f"Relationship between {relationship.source_entity_name} "
-                            f"and {relationship.target_entity_name} needs more context."
-                        ),
-                        relationship_id=relationship.id,
-                    )
-                )
-            key = (
-                relationship.source_entity_id,
-                relationship.target_entity_id,
-                relation_text,
-            )
-            if key in pair_types:
-                issues.append(
-                    ConsistencyIssue(
-                        code="duplicate_relationship",
-                        severity="warning",
-                        message=(
-                            f"Duplicate relationship between {relationship.source_entity_name} "
-                            f"and {relationship.target_entity_name}."
-                        ),
-                        relationship_id=relationship.id,
-                    )
-                )
-            pair_types[key] = relationship
-            stance = self._relationship_stance(relation_text)
-            if stance:
-                pair_key = frozenset((relationship.source_entity_id, relationship.target_entity_id))
-                existing = pair_stances.setdefault(pair_key, set())
-                if existing and stance not in existing:
-                    issues.append(
-                        ConsistencyIssue(
-                            code="possible_contradiction",
-                            severity="warning",
-                            message=(
-                                f"{relationship.source_entity_name} and "
-                                f"{relationship.target_entity_name} have mixed alliance/conflict signals."
-                            ),
-                            relationship_id=relationship.id,
-                        )
-                    )
-                existing.add(stance)
-
+        issues = detect_consistency_issues(
+            world_tone=rec.tone,
+            entities=entities,
+            relationships=relationships,
+        )
         issues = self._sync_consistency_issues(world_id, issues)
-        severity_cost = {"info": 2, "warning": 8, "error": 18}
-        score = max(0, 100 - sum(severity_cost[issue.severity] for issue in issues))
-        summary = self._consistency_summary(score, issues)
+        score = consistency_score(issues)
+        summary = consistency_summary(score, issues)
         return ConsistencyReportResponse(
             world_id=world_id,
             score=score,
@@ -962,8 +662,8 @@ class WorldService:
         }
         active: list[ConsistencyIssue] = []
         for issue in detected_issues:
-            fingerprint = self._consistency_issue_fingerprint(issue)
-            target_type = self._consistency_issue_target_type(issue)
+            fingerprint = consistency_issue_fingerprint(issue)
+            target_type = consistency_issue_target_type(issue)
             state = existing_by_fingerprint.get(fingerprint)
             if state:
                 status = "reopened" if state.status == "resolved" else state.status
@@ -2774,18 +2474,7 @@ class WorldService:
 
     @staticmethod
     def _display_entity_type(entity_type: str) -> str:
-        normalized = entity_type.strip().lower()
-        if normalized in {"character", "person", "historical figure"}:
-            return "Character"
-        if normalized in {"location", "city", "region", "landmark", "continent"}:
-            return "Location"
-        if normalized in {"faction", "guild", "kingdom", "organization"}:
-            return "Faction"
-        if normalized in {"concept", "magic system", "technology", "term"}:
-            return "Concept"
-        if normalized in {"event", "historical event", "battle"}:
-            return "Event"
-        return "Other"
+        return display_entity_type(entity_type)
 
     @staticmethod
     def _decode_structured_fields(raw: object) -> dict[str, str]:
@@ -2859,140 +2548,6 @@ class WorldService:
         return decoded if isinstance(decoded, dict) else None
 
     @staticmethod
-    def _export_label(preset: str) -> str:
-        labels = {
-            "full_bible": "Full world bible export",
-            "character_dossier": "Character dossier export",
-            "faction_brief": "Faction brief export",
-            "location_gazetteer": "Location gazetteer export",
-            "timeline_only": "Timeline export",
-            "obsidian": "Obsidian-friendly world bible export",
-            "player_handout": "Player-safe campaign handout",
-            "session_brief": "Next-session campaign brief",
-            "dm_campaign_brief": "Full DM campaign brief",
-        }
-        return labels.get(preset, "World bible export")
-
-    @staticmethod
-    def _timeline_markdown(title: str, timeline: list[TimelineEventRead]) -> str:
-        lines = [f"# {title} Timeline", ""]
-        if not timeline:
-            lines.extend(["No timeline events yet.", ""])
-        for event in timeline:
-            lines.extend([f"## {event.event_order}. {event.title}", ""])
-            if event.description:
-                lines.extend([event.description, ""])
-            if event.causes:
-                lines.extend([f"- Cause: {event.causes}"])
-            if event.consequences:
-                lines.extend([f"- Consequence: {event.consequences}"])
-            if event.date_label or event.era_label:
-                lines.extend(
-                    [f"- When: {' / '.join([part for part in (event.era_label, event.date_label) if part])}"]
-                )
-            if event.depends_on:
-                lines.extend([f"- Depends on: {', '.join(str(item) for item in event.depends_on)}"])
-            lines.append("")
-        return "\n".join(lines).strip() + "\n"
-
-    @staticmethod
-    def _campaign_player_handout_markdown(
-        title: str, entities: list[EntityRead], notes: list[LoreNoteRead]
-    ) -> str:
-        visible_notes = [
-            note for note in notes if note.visibility in {"player_visible", "discovered", "redacted"}
-        ]
-        lines = [f"# {title} Player Handout", "", "## Known Lore", ""]
-        if not visible_notes:
-            lines.extend(["No player-visible lore notes yet.", ""])
-        for note in visible_notes:
-            text = note.handout_text or note.body
-            if note.visibility == "redacted":
-                text = "[redacted]"
-            lines.extend([f"### {note.title}", "", text or "No handout text recorded.", ""])
-        known_entity_ids = {
-            note.subject_id for note in visible_notes if note.subject_type == "entity" and note.subject_id
-        }
-        if known_entity_ids:
-            lines.extend(["## Known Entities", ""])
-            for entity in entities:
-                if entity.id in known_entity_ids:
-                    lines.extend([f"### {entity.name}", "", entity.description, ""])
-        return "\n".join(lines).strip() + "\n"
-
-    @staticmethod
-    def _campaign_session_brief_markdown(
-        title: str,
-        sessions: list[CampaignSessionRead],
-        notes: list[LoreNoteRead],
-        clocks: list[FactionClockRead],
-    ) -> str:
-        lines = [f"# {title} Session Brief", "", "## Recent Sessions", ""]
-        for session in sessions[:3]:
-            lines.extend([f"### {session.session_number}. {session.title}", ""])
-            if session.recap:
-                lines.extend([session.recap, ""])
-            if session.consequences:
-                lines.extend([f"- Consequences: {session.consequences}", ""])
-        active_clocks = [clock for clock in clocks if clock.status == "active"]
-        lines.extend(["## Active Clocks", ""])
-        if not active_clocks:
-            lines.extend(["No active clocks.", ""])
-        for clock in active_clocks:
-            lines.extend([f"- {clock.title}: {clock.filled_segments}/{clock.segments}"])
-            if clock.stakes:
-                lines.extend([f"  - Stakes: {clock.stakes}"])
-        prep_notes = [note for note in notes if note.visibility != "player_visible"][:8]
-        lines.extend(["", "## Prep Notes", ""])
-        if not prep_notes:
-            lines.extend(["No prep notes recorded.", ""])
-        for note in prep_notes:
-            lines.extend([f"### {note.title}", "", note.body or note.handout_text or "", ""])
-        return "\n".join(lines).strip() + "\n"
-
-    @staticmethod
-    def _campaign_dm_brief_markdown(
-        title: str,
-        sessions: list[CampaignSessionRead],
-        notes: list[LoreNoteRead],
-        clocks: list[FactionClockRead],
-    ) -> str:
-        lines = [f"# {title} DM Campaign Brief", "", "## Faction Clocks", ""]
-        if not clocks:
-            lines.extend(["No faction clocks yet.", ""])
-        for clock in clocks:
-            lines.extend([f"### {clock.title}", ""])
-            lines.extend([f"- Status: {clock.status}", f"- Progress: {clock.filled_segments}/{clock.segments}"])
-            if clock.stakes:
-                lines.extend([f"- Stakes: {clock.stakes}"])
-            lines.append("")
-        lines.extend(["## Sessions", ""])
-        if not sessions:
-            lines.extend(["No campaign sessions yet.", ""])
-        for session in sessions:
-            lines.extend([f"### {session.session_number}. {session.title}", ""])
-            for label, text in (
-                ("Recap", session.recap),
-                ("Player Actions", session.player_actions),
-                ("Consequences", session.consequences),
-            ):
-                if text:
-                    lines.extend([f"**{label}:** {text}", ""])
-        lines.extend(["## Lore Notes", ""])
-        if not notes:
-            lines.extend(["No lore notes yet.", ""])
-        for note in notes:
-            lines.extend([f"### {note.title}", ""])
-            lines.extend([f"- Visibility: {note.visibility}", f"- Truth: {note.truth_state}"])
-            if note.reveal_condition:
-                lines.extend([f"- Reveal: {note.reveal_condition}"])
-            body = note.body or note.handout_text
-            if body:
-                lines.extend(["", body])
-            lines.append("")
-        return "\n".join(lines).strip() + "\n"
-
-    @staticmethod
     def _consistency_issue_state_from_record(record) -> ConsistencyIssueStateRead:  # noqa: ANN001
         props = record.get("props", record)
         return ConsistencyIssueStateRead(
@@ -3011,54 +2566,3 @@ class WorldService:
             last_seen=datetime.fromisoformat(str(props["last_seen"])),
             updated_at=datetime.fromisoformat(str(props["updated_at"])),
         )
-
-    @staticmethod
-    def _consistency_issue_target_type(issue: ConsistencyIssue) -> str:
-        if issue.entity_id:
-            return "entity"
-        if issue.relationship_id:
-            return "relationship"
-        return "world"
-
-    @classmethod
-    def _consistency_issue_fingerprint(cls, issue: ConsistencyIssue) -> str:
-        target_type = cls._consistency_issue_target_type(issue)
-        if issue.entity_id:
-            target_id = str(issue.entity_id)
-        elif issue.relationship_id:
-            target_id = str(issue.relationship_id)
-        else:
-            target_id = " ".join(issue.message.lower().split())
-        raw = f"{issue.code}:{target_type}:{target_id}"
-        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-    @staticmethod
-    def _relationship_stance(relation_type: str) -> str | None:
-        ally_cues = {"ally", "allied", "protect", "supports", "serves", "trusts", "loves"}
-        conflict_cues = {"enemy", "rival", "hunts", "opposes", "betrays", "hates", "fights"}
-        if any(cue in relation_type for cue in ally_cues):
-            return "alliance"
-        if any(cue in relation_type for cue in conflict_cues):
-            return "conflict"
-        return None
-
-    @staticmethod
-    def _consistency_summary(score: int, issues: list[ConsistencyIssue]) -> str:
-        if not issues:
-            return "Canon looks ready: no heuristic consistency issues were found."
-        error_count = sum(1 for issue in issues if issue.severity == "error")
-        warning_count = sum(1 for issue in issues if issue.severity == "warning")
-        info_count = sum(1 for issue in issues if issue.severity == "info")
-        parts = []
-        if error_count:
-            parts.append(f"{error_count} blocking issue(s)")
-        if warning_count:
-            parts.append(f"{warning_count} warning(s)")
-        if info_count:
-            parts.append(f"{info_count} improvement note(s)")
-        focus = "Fix errors first, then connect isolated lore and add context where flagged."
-        if score >= 85:
-            focus = "Strong demo shape; the remaining notes are polish."
-        elif score >= 65:
-            focus = "Demoable, but relationship context and chronology need attention."
-        return f"Score {score}: {', '.join(parts)}. {focus}"
