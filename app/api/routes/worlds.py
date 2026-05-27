@@ -18,6 +18,8 @@ from app.schemas.world import (
     ConsistencyReportResponse,
     DemoWorldResponse,
     DraftCreate,
+    DraftExtractionRequest,
+    DraftExtractionResponse,
     DraftListResponse,
     DraftRead,
     DraftUpdate,
@@ -367,8 +369,14 @@ def apply_suggestion(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     if not result:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suggestion or entity not found")
-    suggestion, entity = result
-    return SuggestionApplyResponse(suggestion=suggestion, entity=entity)
+    suggestion, entity, relationship, timeline_event, lore_note = result
+    return SuggestionApplyResponse(
+        suggestion=suggestion,
+        entity=entity,
+        relationship=relationship,
+        timeline_event=timeline_event,
+        lore_note=lore_note,
+    )
 
 
 @router.get("/{world_id}/timeline", response_model=TimelineEventListResponse)
@@ -763,6 +771,28 @@ def check_draft(
     svc: WorldService = Depends(get_world_service),
 ) -> PassageCheckResponse:
     result = svc.check_draft(world_id, draft_id)
+    if not result:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Draft not found")
+    return result
+
+
+@router.post("/{world_id}/drafts/{draft_id}/extract", response_model=DraftExtractionResponse)
+def extract_draft_excerpt(
+    world_id: UUID,
+    draft_id: UUID,
+    body: DraftExtractionRequest,
+    svc: WorldService = Depends(get_world_service),
+) -> DraftExtractionResponse:
+    try:
+        result = svc.extract_draft_excerpt(
+            world_id=world_id,
+            draft_id=draft_id,
+            excerpt=body.excerpt,
+            instruction=body.instruction,
+            max_candidates=body.max_candidates,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     if not result:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Draft not found")
     return result

@@ -6,6 +6,7 @@ import './CreateWorld.css';
 const CreateWorld = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
   const [formData, setFormData] = useState({
     title: '',
     tone: '',
@@ -23,6 +24,7 @@ const CreateWorld = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setErrorMessage('');
     try {
       const result = await createWorld({
         title: formData.title,
@@ -33,7 +35,7 @@ const CreateWorld = () => {
       navigate(`/worlds/${result.id}`);
     } catch (err) {
       console.error(err);
-      // Would be better to use a toast here
+      setErrorMessage('Unable to create this world. Review the form and try again.');
     } finally {
       setLoading(false);
     }
@@ -42,11 +44,18 @@ const CreateWorld = () => {
   return (
     <div className="create-world-container">
       <div className="create-header">
-        <h2>Forge a New World</h2>
+        <h1>Forge a New World</h1>
         <p className="text-secondary">Define the foundational properties of your universe.</p>
       </div>
 
-      <form className="glass create-form" onSubmit={handleSubmit}>
+      {errorMessage && (
+        <div className="workspace-alert error" role="alert">
+          {errorMessage}
+        </div>
+      )}
+
+      <form className="glass create-form" onSubmit={handleSubmit} aria-describedby="create-world-help">
+        <p id="create-world-help" className="form-help">Required fields are marked with an asterisk.</p>
         <div className="form-group">
           <label htmlFor="title">World Title <span className="required">*</span></label>
           <input 
@@ -57,6 +66,7 @@ const CreateWorld = () => {
             onChange={handleChange} 
             placeholder="e.g., The Ashen Wastes, Chronos Prime" 
             required 
+            aria-required="true"
             className="form-input"
           />
         </div>

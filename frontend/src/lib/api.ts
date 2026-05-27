@@ -97,6 +97,11 @@ export interface GenerationSuggestion {
   suggested_type: string | null;
   status: 'pending' | 'accepted' | 'discarded';
   created_at: string;
+  candidate_kind: 'entity' | 'relationship' | 'timeline_event' | 'lore_note' | null;
+  source_type: 'draft' | 'generation' | 'session' | null;
+  source_id: string | null;
+  source_excerpt: string | null;
+  payload: Record<string, unknown> | null;
 }
 
 export interface TimelineEvent {
@@ -389,7 +394,7 @@ export const applySuggestion = async (
   worldId: string,
   suggestionId: string,
   payload: {
-    mode: 'create_entity' | 'append_to_entity' | 'replace_entity' | 'discard';
+    mode: 'create_entity' | 'append_to_entity' | 'replace_entity' | 'discard' | 'create_relationship' | 'create_timeline_event' | 'create_lore_note';
     entity_id?: string;
     name?: string;
     entity_type?: string;
@@ -548,6 +553,15 @@ export const deleteDraft = async (worldId: string, draftId: string): Promise<voi
 
 export const checkDraft = async (worldId: string, draftId: string): Promise<PassageCheck> => {
   const response = await api.post(`/worlds/${worldId}/drafts/${draftId}/check`);
+  return response.data;
+};
+
+export const extractDraftExcerpt = async (
+  worldId: string,
+  draftId: string,
+  payload: { excerpt: string; instruction?: string; max_candidates?: number },
+): Promise<{ world_id: string; draft_id: string; summary: string; suggestions: GenerationSuggestion[] }> => {
+  const response = await api.post(`/worlds/${worldId}/drafts/${draftId}/extract`, payload);
   return response.data;
 };
 

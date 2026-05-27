@@ -246,14 +246,19 @@ const WorldWiki = () => {
   const renderEntityLink = (entityId: string, fallback: string) => {
     const entity = entityById.get(entityId);
     return (
-      <button className="wiki-text-link" type="button" onClick={() => setSelectedEntity(entityId)}>
+      <button
+        className="wiki-text-link"
+        type="button"
+        onClick={() => setSelectedEntity(entityId)}
+        aria-current={selectedEntity?.id === entityId ? 'true' : undefined}
+      >
         {entity?.name ?? fallback}
       </button>
     );
   };
 
   if (loading) {
-    return <div className="wiki-loading">Loading world wiki...</div>;
+    return <div className="wiki-loading" role="status">Loading world wiki...</div>;
   }
 
   if (errorMessage || !world) {
@@ -273,7 +278,7 @@ const WorldWiki = () => {
 
   return (
     <div className="world-wiki-page page-enter">
-      <aside className="wiki-sidebar">
+      <aside className="wiki-sidebar" aria-label="Wiki navigation">
         <Link to="/worlds" className="wiki-back-link">
           <ArrowLeft size={18} />
           <span>Worlds</span>
@@ -285,6 +290,7 @@ const WorldWiki = () => {
         </button>
 
         <label className="wiki-search">
+          <span className="sr-only">Search canon</span>
           <Search size={16} />
           <input
             type="search"
@@ -304,6 +310,7 @@ const WorldWiki = () => {
               className={visibilityMode === 'dm' ? 'active' : ''}
               type="button"
               onClick={() => setVisibilityMode('dm')}
+              aria-pressed={visibilityMode === 'dm'}
             >
               DM
             </button>
@@ -311,6 +318,7 @@ const WorldWiki = () => {
               className={visibilityMode === 'player' ? 'active' : ''}
               type="button"
               onClick={() => setVisibilityMode('player')}
+              aria-pressed={visibilityMode === 'player'}
             >
               Player
             </button>
@@ -330,6 +338,7 @@ const WorldWiki = () => {
                   className={activeTypes.has(type) ? 'active' : ''}
                   type="button"
                   onClick={() => toggleType(type)}
+                  aria-pressed={activeTypes.has(type)}
                 >
                   {type}
                 </button>
@@ -359,6 +368,7 @@ const WorldWiki = () => {
                     }`}
                     type="button"
                     onClick={() => setSelectedEntity(entity.id)}
+                    aria-current={selectedEntity?.id === entity.id ? 'true' : undefined}
                   >
                     {entity.name}
                   </button>
@@ -369,7 +379,7 @@ const WorldWiki = () => {
         </nav>
       </aside>
 
-      <main className="wiki-reader">
+      <div className="wiki-reader" role="region" aria-label="Wiki reader">
         {!hasEntities ? (
           <article className="wiki-article">
             <p className="wiki-kicker">World Overview</p>
@@ -506,9 +516,9 @@ const WorldWiki = () => {
             )}
           </article>
         )}
-      </main>
+      </div>
 
-      <aside className="wiki-context">
+      <aside className="wiki-context" aria-label="Wiki context">
         {selectedEntity ? (
           <>
             <section>

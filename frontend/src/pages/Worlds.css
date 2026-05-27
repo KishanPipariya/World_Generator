@@ -12,6 +12,10 @@
   flex-wrap: wrap;
 }
 
+.worlds-header h1 {
+  font-size: 2rem;
+}
+
 .text-secondary {
   color: var(--text-secondary);
 }
@@ -84,7 +88,7 @@
   min-width: 0;
 }
 
-.world-card-header h3 {
+.world-card-header h2 {
   font-size: 1.25rem;
   font-weight: 600;
   margin: 0;

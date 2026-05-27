@@ -134,7 +134,7 @@ class _FakeSession:
 
 class _FakeDriver:
     def __init__(self):
-        self.db = {"worlds": {}, "entities": {}, "relationships": {}, "canon_issues": {}}
+        self.db = {"worlds": {}, "entities": {}, "relationships": {}, "canon_issues": {}, "suggestions": {}, "drafts": {}, "timeline": {}, "lore_notes": {}}
         
     def session(self):
         return _FakeSession(self.db)

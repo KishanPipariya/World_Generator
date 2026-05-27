@@ -28,9 +28,11 @@ import {
   createCampaignSession,
   createFactionClock,
   createLoreNote,
+  checkDraft,
   checkPassage,
   createTimelineEvent,
   createEntity,
+  createDraft,
   createGraphView,
   createPlanningBoard,
   createPlanningCard,
@@ -39,6 +41,7 @@ import {
   deleteWorld,
   deleteRelationship,
   exportMarkdown,
+  extractDraftExcerpt,
   fetchConsistencyIssues,
   fetchConsistencyReport,
   fetchCampaignSessions,
@@ -46,6 +49,7 @@ import {
   fetchFactionClocks,
   fetchGraphViews,
   fetchHealth,
+  fetchDrafts,
   fetchLoreNotes,
   fetchPlanningBoards,
   fetchRelationships,
@@ -60,7 +64,9 @@ import {
   type ConsistencyIssueState,
   type ConsistencyIssueStatus,
   updateEntity,
+  updateDraft,
   type ConsistencyReport,
+  type DraftPassage,
   type Entity,
   type FactionClock,
   type GenerationSuggestion,
@@ -153,6 +159,11 @@ const WorldDetail = () => {
   const [entities, setEntities] = useState<Entity[]>([]);
   const [relationships, setRelationships] = useState<Relationship[]>([]);
   const [suggestions, setSuggestions] = useState<GenerationSuggestion[]>([]);
+  const [drafts, setDrafts] = useState<DraftPassage[]>([]);
+  const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
+  const [draftForm, setDraftForm] = useState({ title: '', body: '' });
+  const [draftSelection, setDraftSelection] = useState('');
+  const [draftInstruction, setDraftInstruction] = useState('');
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
   const [graphViews, setGraphViews] = useState<GraphView[]>([]);
   const [planningBoards, setPlanningBoards] = useState<PlanningBoard[]>([]);
@@ -234,6 +245,11 @@ const WorldDetail = () => {
   const selectedRelationship = useMemo(
     () => relationships.find((relationship) => relationship.id === selectedRelationshipId) ?? null,
     [relationships, selectedRelationshipId],
+  );
+
+  const selectedDraft = useMemo(
+    () => drafts.find((draft) => draft.id === selectedDraftId) ?? null,
+    [drafts, selectedDraftId],
   );
 
   const entityFormDirty = useMemo(
@@ -332,9 +348,18 @@ const WorldDetail = () => {
     ],
   );
 
+  const graphRelationshipRows = useMemo(() => {
+    const entityNames = new Map(graphEntities.map((entity) => [entity.id, entity.name]));
+    return graphRelationships.map((relationship) => ({
+      ...relationship,
+      sourceName: entityNames.get(relationship.source_entity_id) ?? relationship.source_entity_name,
+      targetName: entityNames.get(relationship.target_entity_id) ?? relationship.target_entity_name,
+    }));
+  }, [graphEntities, graphRelationships]);
+
   const loadWorkspace = async (worldId: string) => {
     setErrorMessage('');
-    const [worldData, entityData, relationshipData, suggestionData, timelineData, graphViewData, boardData, sessionData, noteData, clockData, healthData] = await Promise.all([
+    const [worldData, entityData, relationshipData, suggestionData, timelineData, graphViewData, boardData, sessionData, noteData, clockData, draftData, healthData] = await Promise.all([
       fetchWorld(worldId),
       fetchEntities(worldId),
       fetchRelationships(worldId),
@@ -345,6 +370,7 @@ const WorldDetail = () => {
       fetchCampaignSessions(worldId).catch(() => []),
       fetchLoreNotes(worldId).catch(() => []),
       fetchFactionClocks(worldId).catch(() => []),
+      fetchDrafts(worldId).catch(() => []),
       fetchHealth().catch(() => null),
     ]);
     setWorld(worldData);
@@ -357,6 +383,12 @@ const WorldDetail = () => {
     setCampaignSessions(sessionData);
     setLoreNotes(noteData);
     setFactionClocks(clockData);
+    setDrafts(draftData);
+    const nextDraft = draftData[0] ?? null;
+    setSelectedDraftId((current) => current ?? nextDraft?.id ?? null);
+    if (nextDraft) {
+      setDraftForm((current) => current.title || current.body ? current : { title: nextDraft.title, body: nextDraft.body });
+    }
     setHealth(healthData);
     setSelectedEntityId((current) => current ?? entityData[0]?.id ?? null);
   };
@@ -406,6 +438,12 @@ const WorldDetail = () => {
     }
   }, [id, selectedEntity]);
 
+  useEffect(() => {
+    if (!selectedDraft) return;
+    setDraftForm({ title: selectedDraft.title, body: selectedDraft.body });
+    setDraftSelection('');
+  }, [selectedDraft]);
+
   const refreshEntities = async () => {
     if (!id) return;
     const [entityData, relationshipData] = await Promise.all([
@@ -426,10 +464,84 @@ const WorldDetail = () => {
     setTimelineEvents(timelineData);
   };
 
+  const refreshDrafts = async () => {
+    if (!id) return;
+    const draftData = await fetchDrafts(id).catch(() => []);
+    setDrafts(draftData);
+    setSelectedDraftId((current) => current ?? draftData[0]?.id ?? null);
+  };
+
+  const handleDraftSelect = (draftId: string) => {
+    const draft = drafts.find((item) => item.id === draftId);
+    setSelectedDraftId(draftId || null);
+    if (draft) setDraftForm({ title: draft.title, body: draft.body });
+    setDraftSelection('');
+  };
+
   const selectEntity = (entityId: string | null) => {
     if (entityFormDirty && !window.confirm('Discard unsaved entity edits?')) return;
     setSelectedEntityId(entityId);
     setSelectedRelationshipId(null);
+  };
+
+  const handleDraftSave = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!id || !draftForm.title.trim()) return;
+    setBusy(true);
+    setErrorMessage('');
+    try {
+      const saved = selectedDraft
+        ? await updateDraft(id, selectedDraft.id, { title: draftForm.title.trim(), body: draftForm.body })
+        : await createDraft(id, { title: draftForm.title.trim(), body: draftForm.body });
+      await refreshDrafts();
+      setSelectedDraftId(saved.id);
+      setDraftSelection('');
+      setStatusMessage(selectedDraft ? 'Draft saved.' : 'Draft created.');
+    } catch {
+      setErrorMessage('Unable to save draft.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDraftTextSelect = (event: React.SyntheticEvent<HTMLTextAreaElement>) => {
+    const target = event.currentTarget;
+    setDraftSelection(target.value.slice(target.selectionStart, target.selectionEnd).trim());
+  };
+
+  const handleDraftExtract = async () => {
+    if (!id || !selectedDraft || !draftSelection) return;
+    setBusy(true);
+    setErrorMessage('');
+    try {
+      const result = await extractDraftExcerpt(id, selectedDraft.id, {
+        excerpt: draftSelection,
+        instruction: draftInstruction.trim() || undefined,
+        max_candidates: 6,
+      });
+      await refreshReviewData();
+      setStatusMessage(`${result.suggestions.length} canon suggestion(s) queued.`);
+    } catch {
+      setErrorMessage('Unable to extract canon suggestions from draft selection.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDraftCheck = async () => {
+    if (!id || !selectedDraft) return;
+    setBusy(true);
+    setErrorMessage('');
+    try {
+      const reportResult = await checkDraft(id, selectedDraft.id);
+      setPassageReport(reportResult);
+      await refreshDrafts();
+      setStatusMessage(reportResult.summary);
+    } catch {
+      setErrorMessage('Unable to check draft.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleEntitySubmit = async (event: React.FormEvent) => {
@@ -744,7 +856,7 @@ const WorldDetail = () => {
 
   const handleSuggestionApply = async (
     suggestion: GenerationSuggestion,
-    mode: 'create_entity' | 'append_to_entity' | 'replace_entity' | 'discard',
+    mode: 'create_entity' | 'append_to_entity' | 'replace_entity' | 'discard' | 'create_relationship' | 'create_timeline_event' | 'create_lore_note',
   ) => {
     if (!id) return;
     setBusy(true);
@@ -756,7 +868,7 @@ const WorldDetail = () => {
         name: generatedName.trim() || suggestion.suggested_name || 'Generated Lore',
         entity_type: generatedType || suggestion.suggested_type || 'Concept',
       });
-      await Promise.all([refreshEntities(), refreshReviewData()]);
+      await Promise.all([refreshEntities(), refreshReviewData(), fetchLoreNotes(id).then(setLoreNotes).catch(() => [])]);
       if (result.entity?.id) setSelectedEntityId(result.entity.id);
       setStatusMessage(mode === 'discard' ? 'Suggestion discarded.' : 'Suggestion applied to canon.');
     } catch {
@@ -1041,7 +1153,7 @@ const WorldDetail = () => {
   };
 
   if (loading) {
-    return <div className="loading-state">Loading world workspace...</div>;
+    return <div className="loading-state" role="status">Loading world workspace...</div>;
   }
 
   if (!world) {
@@ -1093,9 +1205,9 @@ const WorldDetail = () => {
           </button>
           <select
             className="form-input compact-select"
+            aria-label="Export preset"
             value={exportPreset}
             onChange={(event) => setExportPreset(event.target.value as typeof exportPreset)}
-            title="Export preset"
           >
             {EXPORT_PRESETS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
@@ -1111,7 +1223,11 @@ const WorldDetail = () => {
       </div>
 
       {(statusMessage || errorMessage) && (
-        <div className={`workspace-alert ${errorMessage ? 'error' : 'success'}`}>
+        <div
+          className={`workspace-alert ${errorMessage ? 'error' : 'success'}`}
+          role={errorMessage ? 'alert' : 'status'}
+          aria-live={errorMessage ? 'assertive' : 'polite'}
+        >
           {errorMessage || statusMessage}
         </div>
       )}
@@ -1152,6 +1268,7 @@ const WorldDetail = () => {
                           className="icon-button"
                           type="button"
                           title="Ignore issue"
+                          aria-label={`Ignore issue: ${issue.message}`}
                           disabled={busy}
                           onClick={() => handleIssueUpdate(issue, { status: 'ignored' })}
                         >
@@ -1161,6 +1278,7 @@ const WorldDetail = () => {
                           className="icon-button"
                           type="button"
                           title="Resolve issue"
+                          aria-label={`Resolve issue: ${issue.message}`}
                           disabled={busy}
                           onClick={() => handleIssueUpdate(issue, { status: 'resolved' })}
                         >
@@ -1171,6 +1289,7 @@ const WorldDetail = () => {
                             className="icon-button"
                             type="button"
                             title="Mark open"
+                            aria-label={`Mark issue open: ${issue.message}`}
                             disabled={busy}
                             onClick={() => handleIssueUpdate(issue, { status: 'open' })}
                           >
@@ -1179,6 +1298,7 @@ const WorldDetail = () => {
                         )}
                         <input
                           className="issue-note-input"
+                          aria-label={`Note for issue: ${issue.message}`}
                           value={issueNotes[issue.issue_id] ?? issue.note ?? ''}
                           onChange={(event) => setIssueNotes((current) => ({
                             ...current,
@@ -1190,6 +1310,7 @@ const WorldDetail = () => {
                           className="icon-button"
                           type="button"
                           title="Save note"
+                          aria-label={`Save note for issue: ${issue.message}`}
                           disabled={busy}
                           onClick={() => handleIssueUpdate(issue, {
                             note: issueNotes[issue.issue_id ?? ''] ?? '',
@@ -1220,6 +1341,7 @@ const WorldDetail = () => {
                           className="icon-button"
                           type="button"
                           title="Reopen issue"
+                          aria-label={`Reopen issue: ${issue.message}`}
                           disabled={busy}
                           onClick={() => handleIssueStateUpdate(issue, { status: 'open' })}
                         >
@@ -1227,6 +1349,7 @@ const WorldDetail = () => {
                         </button>
                         <input
                           className="issue-note-input"
+                          aria-label={`Note for managed issue: ${issue.message}`}
                           value={issueNotes[issue.id] ?? issue.note ?? ''}
                           onChange={(event) => setIssueNotes((current) => ({
                             ...current,
@@ -1238,6 +1361,7 @@ const WorldDetail = () => {
                           className="icon-button"
                           type="button"
                           title="Save note"
+                          aria-label={`Save note for managed issue: ${issue.message}`}
                           disabled={busy}
                           onClick={() => handleIssueStateUpdate(issue, {
                             note: issueNotes[issue.id] ?? '',
@@ -1286,15 +1410,38 @@ const WorldDetail = () => {
                 <div>
                   <strong>{suggestion.suggested_name || 'Generated lore'}</strong>
                   <p className="text-muted">{suggestion.instruction}</p>
+                  <div className="suggestion-badges">
+                    <span>{(suggestion.candidate_kind ?? 'entity').replace('_', ' ')}</span>
+                    {suggestion.source_type && <span>{suggestion.source_type}</span>}
+                  </div>
                   <pre className="lore-content compact-lore">{suggestion.content}</pre>
                 </div>
                 <div className="form-actions">
-                  <button className="btn btn-secondary" type="button" onClick={() => handleSuggestionApply(suggestion, 'append_to_entity')} disabled={!selectedEntity || busy}>
-                    Append
-                  </button>
-                  <button className="btn btn-secondary" type="button" onClick={() => handleSuggestionApply(suggestion, 'create_entity')} disabled={busy}>
-                    Accept New
-                  </button>
+                  {(suggestion.candidate_kind === null || suggestion.candidate_kind === 'entity') && (
+                    <>
+                      <button className="btn btn-secondary" type="button" onClick={() => handleSuggestionApply(suggestion, 'append_to_entity')} disabled={!selectedEntity || busy}>
+                        Append
+                      </button>
+                      <button className="btn btn-secondary" type="button" onClick={() => handleSuggestionApply(suggestion, 'create_entity')} disabled={busy}>
+                        Accept New
+                      </button>
+                    </>
+                  )}
+                  {suggestion.candidate_kind === 'relationship' && (
+                    <button className="btn btn-secondary" type="button" onClick={() => handleSuggestionApply(suggestion, 'create_relationship')} disabled={busy}>
+                      Add Relation
+                    </button>
+                  )}
+                  {suggestion.candidate_kind === 'timeline_event' && (
+                    <button className="btn btn-secondary" type="button" onClick={() => handleSuggestionApply(suggestion, 'create_timeline_event')} disabled={busy}>
+                      Add Event
+                    </button>
+                  )}
+                  {suggestion.candidate_kind === 'lore_note' && (
+                    <button className="btn btn-secondary" type="button" onClick={() => handleSuggestionApply(suggestion, 'create_lore_note')} disabled={busy}>
+                      Add Note
+                    </button>
+                  )}
                   <button className="btn btn-danger" type="button" onClick={() => handleSuggestionApply(suggestion, 'discard')} disabled={busy}>
                     Discard
                   </button>
@@ -1306,7 +1453,7 @@ const WorldDetail = () => {
       )}
 
       <div className="workspace-grid">
-        <aside className="entity-browser glass">
+        <aside className="entity-browser glass" aria-label="World bible entity browser">
           <div className="panel-title">
             <BookOpen size={18} />
             <h2>World Bible</h2>
@@ -1315,6 +1462,7 @@ const WorldDetail = () => {
               type="button"
               onClick={() => selectEntity(null)}
               title="New entity"
+              aria-label="Create new entity"
             >
               <Plus size={18} />
             </button>
@@ -1358,12 +1506,16 @@ const WorldDetail = () => {
           )}
         </aside>
 
-        <main className="editor-stack">
-          <div className="workspace-tabs glass">
+        <div className="editor-stack">
+          <div className="workspace-tabs glass" role="tablist" aria-label="Workspace views">
             <button
               className={activeView === 'editor' ? 'active' : ''}
               onClick={() => setActiveView('editor')}
               type="button"
+              role="tab"
+              aria-selected={activeView === 'editor'}
+              aria-controls="editor-panel"
+              id="editor-tab"
             >
               <Pencil size={16} />
               Editor
@@ -1372,6 +1524,10 @@ const WorldDetail = () => {
               className={activeView === 'graph' ? 'active' : ''}
               onClick={() => setActiveView('graph')}
               type="button"
+              role="tab"
+              aria-selected={activeView === 'graph'}
+              aria-controls="graph-panel"
+              id="graph-tab"
             >
               <Network size={16} />
               Graph
@@ -1380,6 +1536,10 @@ const WorldDetail = () => {
               className={activeView === 'campaign' ? 'active' : ''}
               onClick={() => setActiveView('campaign')}
               type="button"
+              role="tab"
+              aria-selected={activeView === 'campaign'}
+              aria-controls="campaign-panel"
+              id="campaign-tab"
             >
               <Flag size={16} />
               Campaign
@@ -1390,6 +1550,80 @@ const WorldDetail = () => {
             <>
               <section className="glass content-section">
                 <div className="section-header">
+                  <FileText className="text-primary" />
+                  <h2>Drafts</h2>
+                  <button className="icon-button" type="button" title="New draft" aria-label="Create new draft" onClick={() => {
+                    setSelectedDraftId(null);
+                    setDraftForm({ title: '', body: '' });
+                    setDraftSelection('');
+                  }}>
+                    <Plus size={16} />
+                  </button>
+                </div>
+                <div className="draft-workspace">
+                  <div className="draft-list" aria-label="Saved drafts">
+                    {drafts.length === 0 ? (
+                      <p className="text-muted">No saved drafts yet.</p>
+                    ) : drafts.map((draft) => (
+                      <button
+                        className={selectedDraftId === draft.id ? 'draft-list-item active' : 'draft-list-item'}
+                        key={draft.id}
+                        type="button"
+                        onClick={() => handleDraftSelect(draft.id)}
+                      >
+                        <span>{draft.title}</span>
+                        <small>{draft.status}</small>
+                      </button>
+                    ))}
+                  </div>
+                  <form className="draft-editor" onSubmit={handleDraftSave}>
+                    <input
+                      className="form-input"
+                      aria-label="Draft title"
+                      value={draftForm.title}
+                      onChange={(event) => setDraftForm({ ...draftForm, title: event.target.value })}
+                      placeholder="Draft title"
+                      required
+                    />
+                    <textarea
+                      className="form-input"
+                      aria-label="Draft body"
+                      value={draftForm.body}
+                      onChange={(event) => {
+                        setDraftForm({ ...draftForm, body: event.target.value });
+                        setDraftSelection('');
+                      }}
+                      onSelect={handleDraftTextSelect}
+                      placeholder="Write or paste a scene draft, save it, then select an excerpt to extract"
+                      rows={8}
+                    />
+                    <input
+                      className="form-input"
+                      aria-label="Draft extraction instruction"
+                      value={draftInstruction}
+                      onChange={(event) => setDraftInstruction(event.target.value)}
+                      placeholder="Extraction focus"
+                    />
+                    <div className="form-actions">
+                      <button className="btn btn-primary" type="submit" disabled={busy}>
+                        <Save size={16} />
+                        Save Draft
+                      </button>
+                      <button className="btn btn-secondary" type="button" onClick={handleDraftCheck} disabled={!selectedDraft || busy}>
+                        <ClipboardCheck size={16} />
+                        Check
+                      </button>
+                      <button className="btn btn-secondary" type="button" onClick={handleDraftExtract} disabled={!selectedDraft || !draftSelection || busy}>
+                        <Sparkles size={16} />
+                        Extract
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </section>
+
+              <section className="glass content-section" id="editor-panel" role="tabpanel" aria-labelledby="editor-tab">
+                <div className="section-header">
                   <BookOpen className="text-secondary" />
                   <h2>{selectedEntity ? 'Entity Detail' : 'New Entity'}</h2>
                   {entityFormDirty && <span className="dirty-indicator">Unsaved</span>}
@@ -1397,6 +1631,7 @@ const WorldDetail = () => {
                 <form onSubmit={handleEntitySubmit} className="entity-form">
                   <div className="form-row">
                     <input
+                      aria-label="Entity name"
                       value={entityForm.name}
                       onChange={(event) => setEntityForm({ ...entityForm, name: event.target.value })}
                       placeholder="Name"
@@ -1404,6 +1639,7 @@ const WorldDetail = () => {
                       required
                     />
                     <select
+                      aria-label="Entity type"
                       value={entityForm.entity_type}
                       onChange={(event) => setEntityForm({ ...entityForm, entity_type: event.target.value })}
                       className="form-input"
@@ -1412,6 +1648,7 @@ const WorldDetail = () => {
                     </select>
                   </div>
                   <textarea
+                    aria-label="Entity description"
                     value={entityForm.description}
                     onChange={(event) => setEntityForm({ ...entityForm, description: event.target.value })}
                     placeholder="Description"
@@ -1464,6 +1701,7 @@ const WorldDetail = () => {
                 </div>
                 <form onSubmit={handleRelationshipSubmit} className="relationship-form">
                   <select
+                    aria-label="Relationship source entity"
                     value={relationshipForm.source_entity_id}
                     onChange={(event) => setRelationshipForm({ ...relationshipForm, source_entity_id: event.target.value })}
                     className="form-input"
@@ -1473,6 +1711,7 @@ const WorldDetail = () => {
                     {entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
                   </select>
                   <input
+                    aria-label="Relationship type"
                     value={relationshipForm.relation_type}
                     onChange={(event) => setRelationshipForm({ ...relationshipForm, relation_type: event.target.value })}
                     placeholder="Relation"
@@ -1480,6 +1719,7 @@ const WorldDetail = () => {
                     required
                   />
                   <select
+                    aria-label="Relationship target entity"
                     value={relationshipForm.target_entity_id}
                     onChange={(event) => setRelationshipForm({ ...relationshipForm, target_entity_id: event.target.value })}
                     className="form-input"
@@ -1489,12 +1729,14 @@ const WorldDetail = () => {
                     {entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
                   </select>
                   <input
+                    aria-label="Relationship notes"
                     value={relationshipForm.notes}
                     onChange={(event) => setRelationshipForm({ ...relationshipForm, notes: event.target.value })}
                     placeholder="Notes"
                     className="form-input"
                   />
                   <select
+                    aria-label="Relationship category"
                     value={relationshipForm.category}
                     onChange={(event) => setRelationshipForm({ ...relationshipForm, category: event.target.value })}
                     className="form-input"
@@ -1507,6 +1749,7 @@ const WorldDetail = () => {
                     <option>History</option>
                   </select>
                   <input
+                    aria-label="Relationship strength from 1 to 5"
                     value={relationshipForm.strength}
                     onChange={(event) => setRelationshipForm({ ...relationshipForm, strength: Number(event.target.value) })}
                     className="form-input"
@@ -1530,14 +1773,13 @@ const WorldDetail = () => {
                     <p className="text-muted">No relationships yet.</p>
                   ) : (
                     relationships.map((relationship) => (
-                      <div
+                      <article
                         className={[
                           'relationship-item',
                           selectedRelationshipId === relationship.id ? 'selected' : '',
                           searchResult.matchingRelationshipIds.has(relationship.id) ? 'search-match' : '',
                         ].filter(Boolean).join(' ')}
                         key={relationship.id}
-                        onClick={() => setSelectedRelationshipId(relationship.id)}
                       >
                         <div>
                           <strong>{relationship.source_entity_name}</strong>
@@ -1550,6 +1792,15 @@ const WorldDetail = () => {
                             </small>
                           )}
                         </div>
+                        <button
+                          className="icon-button"
+                          type="button"
+                          aria-label={`Select relationship: ${relationship.source_entity_name} ${relationship.relation_type} ${relationship.target_entity_name}`}
+                          aria-pressed={selectedRelationshipId === relationship.id}
+                          onClick={() => setSelectedRelationshipId(relationship.id)}
+                        >
+                          <Link2 size={16} />
+                        </button>
                         <button
                           className="icon-button danger"
                           onClick={async (event) => {
@@ -1569,10 +1820,11 @@ const WorldDetail = () => {
                           }}
                           type="button"
                           title="Delete relationship"
+                          aria-label={`Delete relationship: ${relationship.source_entity_name} ${relationship.relation_type} ${relationship.target_entity_name}`}
                         >
                           <Trash2 size={16} />
                         </button>
-                      </div>
+                      </article>
                     ))
                   )}
                 </div>
@@ -1585,12 +1837,14 @@ const WorldDetail = () => {
                 </div>
                 <form onSubmit={handleTimelineSubmit} className="timeline-form">
                   <input
+                    aria-label="Timeline event title"
                     value={timelineForm.title}
                     onChange={(event) => setTimelineForm({ ...timelineForm, title: event.target.value })}
                     placeholder="Event title"
                     className="form-input"
                   />
                   <input
+                    aria-label="Timeline event order"
                     value={timelineForm.event_order}
                     onChange={(event) => setTimelineForm({ ...timelineForm, event_order: Number(event.target.value) })}
                     type="number"
@@ -1598,6 +1852,7 @@ const WorldDetail = () => {
                     min={1}
                   />
                   <textarea
+                    aria-label="Timeline event description"
                     value={timelineForm.description}
                     onChange={(event) => setTimelineForm({ ...timelineForm, description: event.target.value })}
                     placeholder="Event description"
@@ -1606,12 +1861,14 @@ const WorldDetail = () => {
                   />
                   <div className="form-row compact">
                     <input
+                      aria-label="Timeline event causes"
                       value={timelineForm.causes}
                       onChange={(event) => setTimelineForm({ ...timelineForm, causes: event.target.value })}
                       placeholder="Causes"
                       className="form-input"
                     />
                     <input
+                      aria-label="Timeline event consequences"
                       value={timelineForm.consequences}
                       onChange={(event) => setTimelineForm({ ...timelineForm, consequences: event.target.value })}
                       placeholder="Consequences"
@@ -1620,12 +1877,14 @@ const WorldDetail = () => {
                   </div>
                   <div className="form-row compact">
                     <input
+                      aria-label="Timeline event era"
                       value={timelineForm.era_label}
                       onChange={(event) => setTimelineForm({ ...timelineForm, era_label: event.target.value })}
                       placeholder="Era"
                       className="form-input"
                     />
                     <input
+                      aria-label="Timeline event date label"
                       value={timelineForm.date_label}
                       onChange={(event) => setTimelineForm({ ...timelineForm, date_label: event.target.value })}
                       placeholder="Date label"
@@ -1633,6 +1892,7 @@ const WorldDetail = () => {
                     />
                   </div>
                   <select
+                    aria-label="Timeline dependency"
                     value={timelineForm.depends_on}
                     onChange={(event) => setTimelineForm({ ...timelineForm, depends_on: event.target.value })}
                     className="form-input"
@@ -1679,12 +1939,14 @@ const WorldDetail = () => {
                 {planningBoards.length === 0 ? (
                   <form className="planning-form" onSubmit={handleCreatePlanningBoard}>
                     <input
+                      aria-label="Planning board name"
                       value={planningForm.boardName}
                       onChange={(event) => setPlanningForm({ ...planningForm, boardName: event.target.value })}
                       placeholder="Board name"
                       className="form-input"
                     />
                     <select
+                      aria-label="Planning board type"
                       value={planningForm.boardType}
                       onChange={(event) => setPlanningForm({ ...planningForm, boardType: event.target.value as PlanningBoard['board_type'] })}
                       className="form-input"
@@ -1704,12 +1966,14 @@ const WorldDetail = () => {
                   <>
                     <form className="planning-form" onSubmit={handleCreatePlanningCard}>
                       <input
+                        aria-label="Planning card title"
                         value={planningForm.cardTitle}
                         onChange={(event) => setPlanningForm({ ...planningForm, cardTitle: event.target.value })}
                         placeholder="Scene or thread card"
                         className="form-input"
                       />
                       <input
+                        aria-label="Planning card lane"
                         value={planningForm.cardLane}
                         onChange={(event) => setPlanningForm({ ...planningForm, cardLane: event.target.value })}
                         placeholder="Lane"
@@ -1752,7 +2016,7 @@ const WorldDetail = () => {
             </>
           ) : activeView === 'campaign' ? (
             <>
-              <section className="glass content-section">
+              <section className="glass content-section" id="campaign-panel" role="tabpanel" aria-labelledby="campaign-tab">
                 <div className="section-header">
                   <Flag className="text-primary" />
                   <h2>Campaign Sessions</h2>
@@ -1760,6 +2024,7 @@ const WorldDetail = () => {
                 <form className="planning-form" onSubmit={handleCreateCampaignSession}>
                   <input
                     className="form-input"
+                    aria-label="Session number"
                     min={1}
                     type="number"
                     value={campaignForm.sessionNumber}
@@ -1768,6 +2033,7 @@ const WorldDetail = () => {
                   />
                   <input
                     className="form-input"
+                    aria-label="Session title"
                     value={campaignForm.sessionTitle}
                     onChange={(event) => setCampaignForm({ ...campaignForm, sessionTitle: event.target.value })}
                     placeholder="Session title"
@@ -1778,6 +2044,7 @@ const WorldDetail = () => {
                   </button>
                   <textarea
                     className="form-input full-width"
+                    aria-label="Session recap and consequences"
                     value={campaignForm.recap}
                     onChange={(event) => setCampaignForm({ ...campaignForm, recap: event.target.value })}
                     placeholder="Recap and consequences"
@@ -1808,12 +2075,14 @@ const WorldDetail = () => {
                 <form className="planning-form" onSubmit={handleCreateLoreNote}>
                   <input
                     className="form-input"
+                    aria-label="Lore note title"
                     value={campaignForm.noteTitle}
                     onChange={(event) => setCampaignForm({ ...campaignForm, noteTitle: event.target.value })}
                     placeholder={selectedEntity ? `Note for ${selectedEntity.name}` : 'World note'}
                   />
                   <select
                     className="form-input"
+                    aria-label="Lore note visibility"
                     value={campaignForm.noteVisibility}
                     onChange={(event) => setCampaignForm({ ...campaignForm, noteVisibility: event.target.value as LoreNote['visibility'] })}
                   >
@@ -1828,6 +2097,7 @@ const WorldDetail = () => {
                   </button>
                   <textarea
                     className="form-input full-width"
+                    aria-label="Lore note body"
                     value={campaignForm.noteBody}
                     onChange={(event) => setCampaignForm({ ...campaignForm, noteBody: event.target.value })}
                     placeholder="Secret, rumor, reveal condition, or handout text"
@@ -1855,12 +2125,14 @@ const WorldDetail = () => {
                 <form className="planning-form" onSubmit={handleCreateFactionClock}>
                   <input
                     className="form-input"
+                    aria-label="Faction clock title"
                     value={campaignForm.clockTitle}
                     onChange={(event) => setCampaignForm({ ...campaignForm, clockTitle: event.target.value })}
                     placeholder="Clock title"
                   />
                   <input
                     className="form-input"
+                    aria-label="Faction clock segments"
                     min={1}
                     max={20}
                     type="number"
@@ -1870,6 +2142,7 @@ const WorldDetail = () => {
                   />
                   <input
                     className="form-input"
+                    aria-label="Faction clock filled segments"
                     min={0}
                     max={campaignForm.clockSegments}
                     type="number"
@@ -1883,6 +2156,7 @@ const WorldDetail = () => {
                   </button>
                   <input
                     className="form-input full-width"
+                    aria-label="Faction clock stakes"
                     value={campaignForm.clockStakes}
                     onChange={(event) => setCampaignForm({ ...campaignForm, clockStakes: event.target.value })}
                     placeholder="Stakes if the clock fills"
@@ -1901,7 +2175,7 @@ const WorldDetail = () => {
               </section>
             </>
           ) : (
-            <section className="glass content-section graph-section">
+            <section className="glass content-section graph-section" id="graph-panel" role="tabpanel" aria-labelledby="graph-tab">
               <div className="section-header graph-header">
                 <div>
                   <Network className="text-primary" />
@@ -1915,6 +2189,7 @@ const WorldDetail = () => {
                 <div className="graph-tools">
                   <select
                     className="form-input"
+                    aria-label="Graph layout mode"
                     value={graphLayoutMode}
                     onChange={(event) => {
                       setGraphLayoutMode(event.target.value as GraphLayoutMode);
@@ -1928,6 +2203,7 @@ const WorldDetail = () => {
                   </select>
                   <select
                     className="form-input"
+                    aria-label="Filter graph by entity type"
                     value={graphTypeFilter}
                     onChange={(event) => setGraphTypeFilter(event.target.value)}
                     title="Filter graph by entity type"
@@ -1935,13 +2211,14 @@ const WorldDetail = () => {
                     <option>All</option>
                     {ENTITY_TYPES.map((type) => <option key={type}>{type}</option>)}
                   </select>
-                  <button className="icon-button" type="button" onClick={handleResetGraph} title="Reset layout">
+                  <button className="icon-button" type="button" onClick={handleResetGraph} title="Reset layout" aria-label="Reset graph layout">
                     <RefreshCcw size={16} />
                   </button>
                 </div>
               </div>
               <div className="saved-views-row">
                 <input
+                  aria-label="Graph view name"
                   value={graphViewName}
                   onChange={(event) => setGraphViewName(event.target.value)}
                   placeholder="Named view"
@@ -1967,11 +2244,65 @@ const WorldDetail = () => {
                   resetKey={graphResetKey}
                 />
               </div>
+              <section className="graph-summary" aria-labelledby="graph-summary-heading">
+                <h3 id="graph-summary-heading">Accessible graph summary</h3>
+                <p className="text-secondary">
+                  Showing {graphEntities.length} {graphTypeFilter === 'All' ? 'entities' : graphTypeFilter.toLowerCase() + ' entities'} and {graphRelationships.length} relationships in {GRAPH_LAYOUTS.find((layout) => layout.value === graphLayoutMode)?.label ?? graphLayoutMode} layout.
+                </p>
+                <div className="graph-summary-grid">
+                  <div>
+                    <h4>Entities</h4>
+                    {graphEntities.length === 0 ? (
+                      <p className="text-muted">No entities match this filter.</p>
+                    ) : (
+                      <ul className="graph-summary-list">
+                        {graphEntities.map((entity) => (
+                          <li key={entity.id}>
+                            <button
+                              className="wiki-text-link"
+                              type="button"
+                              aria-current={selectedEntityId === entity.id ? 'true' : undefined}
+                              onClick={() => selectEntity(entity.id)}
+                            >
+                              {entity.name}
+                            </button>
+                            <span>{displayType(entity.entity_type)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <div>
+                    <h4>Relationships</h4>
+                    {graphRelationshipRows.length === 0 ? (
+                      <p className="text-muted">No visible relationships.</p>
+                    ) : (
+                      <ul className="graph-summary-list">
+                        {graphRelationshipRows.map((relationship) => (
+                          <li key={relationship.id}>
+                            <button
+                              className="wiki-text-link"
+                              type="button"
+                              aria-current={selectedRelationshipId === relationship.id ? 'true' : undefined}
+                              onClick={() => setSelectedRelationshipId(relationship.id)}
+                            >
+                              {relationship.sourceName} {relationship.relation_type} {relationship.targetName}
+                            </button>
+                            {(relationship.category || relationship.stance) && (
+                              <span>{[relationship.category, relationship.stance].filter(Boolean).join(', ')}</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </section>
             </section>
           )}
-        </main>
+        </div>
 
-        <aside className="generator-stack">
+        <aside className="generator-stack" aria-label="Generation and review tools">
           <section className="glass agent-section">
             <div className="agent-header">
               <Bot className="agent-icon" size={24} />
@@ -1991,6 +2322,7 @@ const WorldDetail = () => {
             </div>
             <form onSubmit={handleAgenticGen} className="agent-form">
               <textarea
+                aria-label="Generation prompt"
                 value={agenticInstruction}
                 onChange={(event) => setAgenticInstruction(event.target.value)}
                 placeholder="Generation prompt"
@@ -2009,12 +2341,14 @@ const WorldDetail = () => {
               {saveGenerated && (
                 <div className="form-row compact">
                   <input
+                    aria-label="Generated entity name"
                     value={generatedName}
                     onChange={(event) => setGeneratedName(event.target.value)}
                     placeholder="Entity name"
                     className="form-input"
                   />
                   <select
+                    aria-label="Generated entity type"
                     value={generatedType}
                     onChange={(event) => setGeneratedType(event.target.value)}
                     className="form-input"
@@ -2041,12 +2375,14 @@ const WorldDetail = () => {
               {!saveGenerated && (
                 <div className="form-row compact">
                   <input
+                    aria-label="Generated entity name"
                     value={generatedName}
                     onChange={(event) => setGeneratedName(event.target.value)}
                     placeholder="Entity name"
                     className="form-input"
                   />
                   <select
+                    aria-label="Generated entity type"
                     value={generatedType}
                     onChange={(event) => setGeneratedType(event.target.value)}
                     className="form-input"
@@ -2091,6 +2427,7 @@ const WorldDetail = () => {
             </div>
             <form onSubmit={handlePassageCheck} className="agent-form">
               <textarea
+                aria-label="Passage text to check"
                 value={passageText}
                 onChange={(event) => setPassageText(event.target.value)}
                 placeholder="Paste a scene excerpt"

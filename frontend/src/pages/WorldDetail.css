@@ -266,6 +266,61 @@
   padding: 1rem;
 }
 
+.suggestion-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.45rem;
+}
+
+.suggestion-badges span {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  padding: 0.15rem 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-transform: capitalize;
+}
+
+.draft-workspace {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.draft-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.draft-list-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  padding: 0.7rem;
+  text-align: left;
+}
+
+.draft-list-item.active {
+  border-color: rgba(96, 165, 250, 0.7);
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.draft-list-item small {
+  color: var(--text-muted);
+}
+
+.draft-editor {
+  display: grid;
+  gap: 0.75rem;
+}
+
 .compact-lore {
   max-height: 9rem;
   margin-top: 0.75rem;
@@ -717,6 +772,51 @@
   background: rgba(5, 5, 12, 0.48);
 }
 
+.graph-summary {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.graph-summary h3 {
+  font-size: 1rem;
+}
+
+.graph-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.graph-summary-grid h4 {
+  margin-bottom: 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.graph-summary-list {
+  display: grid;
+  gap: 0.45rem;
+  max-height: 18rem;
+  overflow: auto;
+}
+
+.graph-summary-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.graph-summary-list span {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
 .graph-empty-state {
   height: 100%;
   min-height: 360px;
@@ -894,6 +994,7 @@
 @media (max-width: 820px) {
   .workspace-grid,
   .demo-review-grid,
+  .graph-summary-grid,
   .form-row,
   .form-row.compact,
   .relationship-form,

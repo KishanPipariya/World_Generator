@@ -14,7 +14,7 @@ const WorldsList = () => {
   useEffect(() => {
     fetchWorlds()
       .then(setWorlds)
-      .catch(console.error)
+      .catch(() => setErrorMessage('Unable to load worlds.'))
       .finally(() => setLoading(false));
   }, []);
 
@@ -46,7 +46,7 @@ const WorldsList = () => {
     <div className="worlds-list-container">
       <div className="worlds-header">
         <div>
-          <h2>Your Worlds</h2>
+          <h1>Your Worlds</h1>
           <p className="text-secondary">Manage and explore your created literary universes.</p>
         </div>
         <div className="world-actions">
@@ -61,13 +61,13 @@ const WorldsList = () => {
         </div>
       </div>
 
-      {errorMessage && <div className="workspace-alert error">{errorMessage}</div>}
+      {errorMessage && <div className="workspace-alert error" role="alert">{errorMessage}</div>}
 
       {loading ? (
-        <div className="loading-state">Loading...</div>
+        <div className="loading-state" role="status">Loading worlds...</div>
       ) : worlds.length === 0 ? (
-        <div className="empty-state glass">
-          <Globe2 size={48} className="text-muted" />
+        <div className="empty-state glass" role="status">
+          <Globe2 size={48} className="text-muted" aria-hidden="true" />
           <h3>No worlds found</h3>
           <p>Create a world from scratch or load a complete demo for a faster walkthrough.</p>
           <div className="world-actions mt-4">
@@ -86,7 +86,7 @@ const WorldsList = () => {
             <article key={world.id} className="world-card glass">
               <div className="world-card-header">
                 <Link to={`/worlds/${world.id}`} className="world-card-title">
-                  <h3>{world.title}</h3>
+                  <h2>{world.title}</h2>
                 </Link>
                 <button
                   className="icon-button danger"
@@ -105,7 +105,7 @@ const WorldsList = () => {
                 <p className="world-era">{world.era_notes || 'No era notes'}</p>
               </Link>
               <Link to={`/worlds/${world.id}`} className="world-card-footer">
-                <Clock size={16} />
+              <Clock size={16} aria-hidden="true" />
                 <span>{new Date(world.created_at).toLocaleDateString()}</span>
               </Link>
               <div className="world-card-actions">

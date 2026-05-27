@@ -55,6 +55,11 @@ class _FakeSession:
                 "content": kwargs["content"],
                 "suggested_name": kwargs["suggested_name"],
                 "suggested_type": kwargs["suggested_type"],
+                "candidate_kind": kwargs.get("candidate_kind"),
+                "source_type": kwargs.get("source_type"),
+                "source_id": kwargs.get("source_id"),
+                "source_excerpt": kwargs.get("source_excerpt"),
+                "payload_json": kwargs.get("payload_json", "{}"),
                 "status": "pending",
                 "created_at": kwargs["created_at"],
             }
@@ -586,6 +591,20 @@ class _HealthLLM:
     def enabled(self) -> bool:
         return True
 
+    def generate_section(self, world, section):  # noqa: ANN001
+        return None
+
+    def generate_agentic(self, world, context, instruction):  # noqa: ANN001
+        return None
+
+
+class _JsonLLM(_HealthLLM):
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+    def generate_agentic(self, world, context, instruction):  # noqa: ANN001
+        return self.content
+
 
 @pytest.fixture(autouse=True)
 def _override_services():
@@ -1026,6 +1045,105 @@ def test_saved_draft_crud_and_check_history(client: TestClient) -> None:
     deleted = client.delete(f"/worlds/{wid}/drafts/{draft['id']}")
     assert deleted.status_code == 204
     assert client.get(f"/worlds/{wid}/drafts").json()["drafts"] == []
+
+
+def test_draft_extract_fallback_creates_pending_suggestions_and_applies_new_kinds(client: TestClient) -> None:
+    world = client.post("/worlds", json={"title": "Extraction Desk"}).json()
+    wid = world["id"]
+    asha = client.post(
+        f"/worlds/{wid}/entities",
+        json={"name": "Asha", "entity_type": "Character", "description": "A detective."},
+    ).json()
+    bell = client.post(
+        f"/worlds/{wid}/entities",
+        json={"name": "Bell Tower", "entity_type": "Location", "description": "A landmark."},
+    ).json()
+    excerpt = "During the ash season, Asha met Bell Tower before dawn. Mira Voss carried the blue writ."
+    draft = client.post(
+        f"/worlds/{wid}/drafts",
+        json={"title": "Marked Scene", "body": f"Opening.\n{excerpt}\nClosing."},
+    ).json()
+
+    extracted = client.post(
+        f"/worlds/{wid}/drafts/{draft['id']}/extract",
+        json={"excerpt": excerpt, "max_candidates": 6},
+    )
+    assert extracted.status_code == 200
+    suggestions = extracted.json()["suggestions"]
+    assert suggestions
+    assert {item["source_type"] for item in suggestions} == {"draft"}
+    assert {item["source_id"] for item in suggestions} == {draft["id"]}
+    kinds = {item["candidate_kind"] for item in suggestions}
+    assert {"relationship", "timeline_event", "entity"}.issubset(kinds)
+
+    relationship = next(item for item in suggestions if item["candidate_kind"] == "relationship")
+    applied_relationship = client.post(
+        f"/worlds/{wid}/suggestions/{relationship['id']}/apply",
+        json={"mode": "create_relationship"},
+    )
+    assert applied_relationship.status_code == 200
+    assert applied_relationship.json()["suggestion"]["status"] == "accepted"
+    assert applied_relationship.json()["relationship"]["source_entity_id"] == asha["id"]
+    assert applied_relationship.json()["relationship"]["target_entity_id"] == bell["id"]
+
+    event = next(item for item in suggestions if item["candidate_kind"] == "timeline_event")
+    applied_event = client.post(
+        f"/worlds/{wid}/suggestions/{event['id']}/apply",
+        json={"mode": "create_timeline_event"},
+    )
+    assert applied_event.status_code == 200
+    assert applied_event.json()["timeline_event"]["title"]
+
+
+def test_draft_extract_rejects_excerpt_not_in_saved_body(client: TestClient) -> None:
+    world = client.post("/worlds", json={"title": "Extraction Errors"}).json()
+    draft = client.post(
+        f"/worlds/{world['id']}/drafts",
+        json={"title": "Scene", "body": "Only this text is saved."},
+    ).json()
+
+    missing = client.post(
+        f"/worlds/{world['id']}/drafts/{draft['id']}/extract",
+        json={"excerpt": "Unsaved text"},
+    )
+    assert missing.status_code == 400
+
+    unknown = client.post(
+        f"/worlds/{world['id']}/drafts/00000000-0000-0000-0000-000000000001/extract",
+        json={"excerpt": "Only this text is saved."},
+    )
+    assert unknown.status_code == 404
+
+
+def test_draft_extract_accepts_valid_llm_json(client: TestClient) -> None:
+    llm = _JsonLLM(
+        '{"candidates":[{"candidate_kind":"lore_note","suggested_name":"Blue Writ",'
+        '"content":"The blue writ opens sealed roads.","payload":{"title":"Blue Writ",'
+        '"body":"The blue writ opens sealed roads."}}]}'
+    )
+    fresh = WorldService(driver=_FakeDriver(), llm=llm)
+    app.dependency_overrides[get_world_service] = lambda: fresh
+    world = client.post("/worlds", json={"title": "LLM Extraction"}).json()
+    draft = client.post(
+        f"/worlds/{world['id']}/drafts",
+        json={"title": "Scene", "body": "The blue writ opens sealed roads."},
+    ).json()
+
+    extracted = client.post(
+        f"/worlds/{world['id']}/drafts/{draft['id']}/extract",
+        json={"excerpt": "The blue writ opens sealed roads."},
+    )
+    assert extracted.status_code == 200
+    suggestion = extracted.json()["suggestions"][0]
+    assert suggestion["candidate_kind"] == "lore_note"
+    assert suggestion["suggested_name"] == "Blue Writ"
+
+    applied = client.post(
+        f"/worlds/{world['id']}/suggestions/{suggestion['id']}/apply",
+        json={"mode": "create_lore_note"},
+    )
+    assert applied.status_code == 200
+    assert applied.json()["lore_note"]["title"] == "Blue Writ"
 
 
 def test_visual_planning_resources(client: TestClient) -> None:

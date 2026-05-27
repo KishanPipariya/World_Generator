@@ -200,6 +200,11 @@ class GenerationSuggestionRead(GenerationSuggestionCreate):
     world_id: UUID
     status: Literal["pending", "accepted", "discarded"]
     created_at: datetime
+    candidate_kind: Literal["entity", "relationship", "timeline_event", "lore_note"] | None = None
+    source_type: Literal["draft", "generation", "session"] | None = None
+    source_id: UUID | None = None
+    source_excerpt: str | None = None
+    payload: dict[str, object] | None = None
 
     model_config = {"from_attributes": True}
 
@@ -209,7 +214,15 @@ class GenerationSuggestionListResponse(BaseModel):
 
 
 class SuggestionApplyRequest(BaseModel):
-    mode: Literal["create_entity", "append_to_entity", "replace_entity", "discard"]
+    mode: Literal[
+        "create_entity",
+        "append_to_entity",
+        "replace_entity",
+        "discard",
+        "create_relationship",
+        "create_timeline_event",
+        "create_lore_note",
+    ]
     entity_id: UUID | None = None
     name: str | None = Field(default=None, max_length=200)
     entity_type: str | None = Field(default=None, max_length=100)
@@ -219,6 +232,9 @@ class SuggestionApplyRequest(BaseModel):
 class SuggestionApplyResponse(BaseModel):
     suggestion: GenerationSuggestionRead
     entity: EntityRead | None = None
+    relationship: RelationshipRead | None = None
+    timeline_event: TimelineEventRead | None = None
+    lore_note: LoreNoteRead | None = None
 
 
 class TimelineEventCreate(BaseModel):
@@ -519,3 +535,16 @@ class DraftRead(DraftCreate):
 
 class DraftListResponse(BaseModel):
     drafts: list[DraftRead]
+
+
+class DraftExtractionRequest(BaseModel):
+    excerpt: str = Field(..., min_length=1, max_length=20000)
+    instruction: str | None = Field(default=None, max_length=1000)
+    max_candidates: int = Field(default=6, ge=1, le=12)
+
+
+class DraftExtractionResponse(BaseModel):
+    world_id: UUID
+    draft_id: UUID
+    summary: str
+    suggestions: list[GenerationSuggestionRead]

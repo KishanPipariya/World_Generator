@@ -59,7 +59,7 @@ const WorldGraphView = ({
 
   if (nodes.length === 0) {
     return (
-      <div className="graph-empty-state">
+      <div className="graph-empty-state" role="status">
         <h3>No entities yet</h3>
         <p className="text-muted">Create entities in the editor to populate the graph.</p>
       </div>
@@ -68,6 +68,7 @@ const WorldGraphView = ({
 
   return (
     <ReactFlow
+      aria-label="Supplemental visual world graph. Use the accessible graph summary below for keyboard selection."
       nodes={flowNodes}
       edges={flowEdges}
       onNodesChange={onNodesChange}

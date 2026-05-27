@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, Protocol
@@ -20,6 +21,7 @@ from app.schemas.world import (
     DemoWorldResponse,
     DraftCheckHistoryItem,
     DraftCreate,
+    DraftExtractionResponse,
     DraftRead,
     DraftUpdate,
     EntityRead,
@@ -1129,6 +1131,11 @@ class WorldService:
         content: str,
         suggested_name: str | None = None,
         suggested_type: str | None = None,
+        candidate_kind: str | None = None,
+        source_type: str | None = None,
+        source_id: UUID | None = None,
+        source_excerpt: str | None = None,
+        payload: dict[str, object] | None = None,
     ) -> GenerationSuggestionRead:
         if not self._get_record(world_id):
             raise ValueError("World not found")
@@ -1141,6 +1148,9 @@ class WorldService:
             id: $s_id, world_id: $w_id, instruction: $instruction,
             content: $content, suggested_name: $suggested_name,
             suggested_type: $suggested_type, status: "pending",
+            candidate_kind: $candidate_kind, source_type: $source_type,
+            source_id: $source_id, source_excerpt: $source_excerpt,
+            payload_json: $payload_json,
             created_at: $created_at
         })
         RETURN properties(s) AS props
@@ -1154,6 +1164,11 @@ class WorldService:
                 content=content,
                 suggested_name=suggested_name,
                 suggested_type=suggested_type,
+                candidate_kind=candidate_kind,
+                source_type=source_type,
+                source_id=str(source_id) if source_id else None,
+                source_excerpt=source_excerpt,
+                payload_json=json.dumps(payload or {}),
                 created_at=now.isoformat(),
             )
             record = result.single()
@@ -1185,12 +1200,22 @@ class WorldService:
         name: str | None = None,
         entity_type: str | None = None,
         description: str | None = None,
-    ) -> tuple[GenerationSuggestionRead, EntityRead | None] | None:
+    ) -> tuple[
+        GenerationSuggestionRead,
+        EntityRead | None,
+        RelationshipRead | None,
+        TimelineEventRead | None,
+        LoreNoteRead | None,
+    ] | None:
         suggestion = self._get_suggestion(world_id, suggestion_id)
         if not suggestion:
             return None
         entity: EntityRead | None = None
+        relationship: RelationshipRead | None = None
+        timeline_event: TimelineEventRead | None = None
+        lore_note: LoreNoteRead | None = None
         content = description if description is not None else suggestion.content
+        payload = suggestion.payload or {}
         if mode == "discard":
             status_value = "discarded"
         elif mode == "create_entity":
@@ -1217,10 +1242,58 @@ class WorldService:
                 world_id, entity_id, EntityUpdate(description=next_description)
             )
             status_value = "accepted"
+        elif mode == "create_relationship":
+            source_id = payload.get("source_entity_id")
+            target_id = payload.get("target_entity_id")
+            if not source_id or not target_id:
+                raise ValueError("Relationship suggestions require source and target entities")
+            relationship = self.create_relationship(
+                world_id=world_id,
+                source_entity_id=UUID(str(source_id)),
+                target_entity_id=UUID(str(target_id)),
+                relation_type=str(payload.get("relation_type") or suggestion.suggested_type or "related_to"),
+                notes=str(payload.get("notes") or content),
+                category=str(payload["category"]) if payload.get("category") else None,
+                strength=int(payload["strength"]) if payload.get("strength") else None,
+                history=str(payload["history"]) if payload.get("history") else None,
+                stance=str(payload["stance"]) if payload.get("stance") else None,
+            )
+            status_value = "accepted"
+        elif mode == "create_timeline_event":
+            next_order = len(self.list_timeline_events(world_id) or []) + 1
+            participants = [
+                UUID(str(item))
+                for item in payload.get("participants", [])
+                if self._looks_like_uuid(str(item))
+            ] if isinstance(payload.get("participants"), list) else []
+            timeline_event = self.create_timeline_event(
+                world_id,
+                TimelineEventCreate(
+                    title=str(payload.get("title") or suggestion.suggested_name or "Draft event"),
+                    event_order=int(payload.get("event_order") or next_order),
+                    description=str(payload.get("description") or content),
+                    participants=participants,
+                    date_label=str(payload["date_label"]) if payload.get("date_label") else None,
+                    era_label=str(payload["era_label"]) if payload.get("era_label") else None,
+                ),
+            )
+            status_value = "accepted"
+        elif mode == "create_lore_note":
+            lore_note = self.create_lore_note(
+                world_id,
+                LoreNoteCreate(
+                    title=str(payload.get("title") or suggestion.suggested_name or "Draft lore note"),
+                    body=str(payload.get("body") or content),
+                    subject_type="world",
+                    visibility="dm_only",
+                    truth_state="unknown",
+                ),
+            )
+            status_value = "accepted"
         else:
             raise ValueError("Invalid suggestion apply request")
         updated = self._set_suggestion_status(world_id, suggestion_id, status_value)
-        return updated, entity
+        return updated, entity, relationship, timeline_event, lore_note
 
     def create_timeline_event(
         self, world_id: UUID, data: TimelineEventCreate
@@ -1883,6 +1956,57 @@ class WorldService:
             summary = f"Passage check found {len(issues)} item(s) to review."
         return PassageCheckResponse(world_id=world_id, summary=summary, issues=issues)
 
+    def extract_draft_excerpt(
+        self,
+        world_id: UUID,
+        draft_id: UUID,
+        excerpt: str,
+        instruction: str | None = None,
+        max_candidates: int = 6,
+    ) -> DraftExtractionResponse | None:
+        draft = self.get_draft(world_id, draft_id)
+        if not draft:
+            return None
+        excerpt = excerpt.strip()
+        if not excerpt:
+            raise ValueError("Excerpt is required")
+        if excerpt not in draft.body:
+            raise ValueError("Excerpt must be selected from the saved draft body")
+
+        candidates = self._llm_extract_draft_candidates(
+            world_id, draft.title, excerpt, instruction, max_candidates
+        )
+        if not candidates:
+            candidates = self._fallback_extract_draft_candidates(world_id, excerpt)
+        candidates = self._dedupe_draft_candidates(candidates)[:max_candidates]
+
+        suggestions = [
+            self.create_generation_suggestion(
+                world_id=world_id,
+                instruction=instruction or f"Extract canon candidate from draft: {draft.title}",
+                content=str(candidate["content"]),
+                suggested_name=str(candidate["suggested_name"]),
+                suggested_type=str(candidate.get("suggested_type") or candidate["candidate_kind"]),
+                candidate_kind=str(candidate["candidate_kind"]),
+                source_type="draft",
+                source_id=draft_id,
+                source_excerpt=excerpt,
+                payload=dict(candidate.get("payload") or {}),
+            )
+            for candidate in candidates
+        ]
+        summary = (
+            f"Queued {len(suggestions)} canon suggestion(s) from selected draft excerpt."
+            if suggestions
+            else "No canon suggestions could be extracted from the selected excerpt."
+        )
+        return DraftExtractionResponse(
+            world_id=world_id,
+            draft_id=draft_id,
+            summary=summary,
+            suggestions=suggestions,
+        )
+
     def create_draft(self, world_id: UUID, data: DraftCreate) -> DraftRead:
         if not self._get_record(world_id):
             raise ValueError("World not found")
@@ -2056,6 +2180,167 @@ class WorldService:
                 updated_at=datetime.now(UTC).isoformat(),
             )
         return report
+
+    def _llm_extract_draft_candidates(
+        self,
+        world_id: UUID,
+        draft_title: str,
+        excerpt: str,
+        instruction: str | None,
+        max_candidates: int,
+    ) -> list[dict[str, object]]:
+        rec = self._get_record(world_id)
+        if not rec or not self._llm or not self._llm.enabled():
+            return []
+        prompt = (
+            "Extract canon candidates from this draft excerpt. Return only JSON with a "
+            '"candidates" array. Each candidate must have candidate_kind '
+            '("entity", "relationship", "timeline_event", or "lore_note"), '
+            "suggested_name, content, optional suggested_type, and optional payload. "
+            "Do not create canon directly. "
+            f"Maximum candidates: {max_candidates}. Draft title: {draft_title}. "
+            f"User instruction: {instruction or 'none'}.\n\nExcerpt:\n{excerpt}"
+        )
+        raw = self._llm.generate_agentic(self._to_read(rec), self.get_world_context(world_id), prompt)
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+        raw_candidates = parsed.get("candidates") if isinstance(parsed, dict) else parsed
+        if not isinstance(raw_candidates, list):
+            return []
+        candidates: list[dict[str, object]] = []
+        for item in raw_candidates:
+            candidate = self._normalize_draft_candidate(item)
+            if candidate:
+                candidates.append(candidate)
+        return candidates
+
+    def _fallback_extract_draft_candidates(
+        self, world_id: UUID, excerpt: str
+    ) -> list[dict[str, object]]:
+        entities = self.list_entities(world_id) or []
+        entity_by_name = {entity.name: entity for entity in entities}
+        lower_existing = {entity.name.lower() for entity in entities}
+        sentences = [
+            sentence.strip()
+            for sentence in re.split(r"(?<=[.!?])\s+", excerpt)
+            if sentence.strip()
+        ] or [excerpt]
+        candidates: list[dict[str, object]] = []
+
+        for sentence in sentences:
+            matched = [
+                entity for name, entity in entity_by_name.items()
+                if re.search(rf"\b{re.escape(name)}\b", sentence)
+            ]
+            if len(matched) >= 2:
+                candidates.append({
+                    "candidate_kind": "relationship",
+                    "suggested_name": f"{matched[0].name} / {matched[1].name}",
+                    "suggested_type": "related_to",
+                    "content": sentence,
+                    "payload": {
+                        "source_entity_id": str(matched[0].id),
+                        "target_entity_id": str(matched[1].id),
+                        "relation_type": "related_to",
+                        "notes": sentence,
+                    },
+                })
+            if re.search(r"\b(before|after|during|year|season|night|day|month|century|era)\b", sentence, re.I):
+                candidates.append({
+                    "candidate_kind": "timeline_event",
+                    "suggested_name": self._candidate_title(sentence),
+                    "suggested_type": "event",
+                    "content": sentence,
+                    "payload": {
+                        "title": self._candidate_title(sentence),
+                        "description": sentence,
+                        "participants": [str(entity.id) for entity in matched],
+                    },
+                })
+
+        for name in re.findall(r"\b[A-Z][a-zA-Z'’-]+(?:\s+[A-Z][a-zA-Z'’-]+){0,3}\b", excerpt):
+            clean_name = name.strip(" ,.;:!?")
+            if len(clean_name) < 2 or clean_name.lower() in lower_existing:
+                continue
+            if clean_name in {"Before", "After", "During", "The", "A", "An"}:
+                continue
+            candidates.append({
+                "candidate_kind": "entity",
+                "suggested_name": clean_name,
+                "suggested_type": "Concept",
+                "content": excerpt,
+                "payload": {
+                    "name": clean_name,
+                    "entity_type": "Concept",
+                    "description": excerpt,
+                },
+            })
+
+        if not candidates:
+            candidates.append({
+                "candidate_kind": "lore_note",
+                "suggested_name": "Draft lore note",
+                "suggested_type": "lore_note",
+                "content": excerpt,
+                "payload": {"title": "Draft lore note", "body": excerpt},
+            })
+        return candidates
+
+    @staticmethod
+    def _normalize_draft_candidate(item: object) -> dict[str, object] | None:
+        if not isinstance(item, dict):
+            return None
+        kind = item.get("candidate_kind") or item.get("kind")
+        if kind not in {"entity", "relationship", "timeline_event", "lore_note"}:
+            return None
+        content = item.get("content") or item.get("description") or item.get("body")
+        suggested_name = item.get("suggested_name") or item.get("name") or item.get("title")
+        if not isinstance(content, str) or not content.strip():
+            return None
+        if not isinstance(suggested_name, str) or not suggested_name.strip():
+            suggested_name = WorldService._candidate_title(content)
+        payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+        return {
+            "candidate_kind": kind,
+            "suggested_name": suggested_name.strip()[:200],
+            "suggested_type": str(item.get("suggested_type") or kind)[:100],
+            "content": content.strip(),
+            "payload": payload,
+        }
+
+    @staticmethod
+    def _dedupe_draft_candidates(candidates: list[dict[str, object]]) -> list[dict[str, object]]:
+        seen: set[tuple[str, str, str]] = set()
+        deduped: list[dict[str, object]] = []
+        for candidate in candidates:
+            key = (
+                str(candidate.get("candidate_kind", "")).lower(),
+                str(candidate.get("suggested_name", "")).strip().lower(),
+                str(candidate.get("content", "")).strip().lower(),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(candidate)
+        return deduped
+
+    @staticmethod
+    def _candidate_title(text: str) -> str:
+        words = re.findall(r"[A-Za-z0-9'’-]+", text)
+        title = " ".join(words[:8]).strip()
+        return title[:200] or "Draft candidate"
+
+    @staticmethod
+    def _looks_like_uuid(value: str) -> bool:
+        try:
+            UUID(value)
+        except ValueError:
+            return False
+        return True
 
     def _get_suggestion(
         self, world_id: UUID, suggestion_id: UUID
@@ -2297,6 +2582,11 @@ class WorldService:
             suggested_type=props.get("suggested_type"),
             status=props.get("status", "pending"),
             created_at=datetime.fromisoformat(props["created_at"]),
+            candidate_kind=props.get("candidate_kind"),
+            source_type=props.get("source_type"),
+            source_id=UUID(props["source_id"]) if props.get("source_id") else None,
+            source_excerpt=props.get("source_excerpt"),
+            payload=WorldService._decode_payload(props.get("payload_json")),
         )
 
     @staticmethod
@@ -2553,6 +2843,20 @@ class WorldService:
                 )
             )
         return history
+
+    @staticmethod
+    def _decode_payload(raw: object) -> dict[str, object] | None:
+        if not raw:
+            return None
+        if isinstance(raw, dict):
+            return raw
+        if not isinstance(raw, str):
+            return None
+        try:
+            decoded = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        return decoded if isinstance(decoded, dict) else None
 
     @staticmethod
     def _export_label(preset: str) -> str:

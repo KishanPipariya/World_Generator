@@ -14,23 +14,24 @@ const Home = () => {
         </p>
         <div className="hero-actions">
           <Link to="/worlds" className="btn btn-primary">
-            <Sparkles size={20} />
+            <Sparkles size={20} aria-hidden="true" />
             Start Creating
           </Link>
         </div>
       </header>
 
-      <section className="features-grid">
+      <section className="features-grid" aria-labelledby="home-features-heading">
+        <h2 id="home-features-heading" className="sr-only">Core features</h2>
         <div className="feature-card glass">
           <div className="feature-icon-wrapper">
-            <Map className="feature-icon" size={24} />
+            <Map className="feature-icon" size={24} aria-hidden="true" />
           </div>
           <h3>World Visualization</h3>
           <p>Bring your lore to life with dynamic relationships between characters, factions, and deep historical timelines.</p>
         </div>
         <div className="feature-card glass">
           <div className="feature-icon-wrapper">
-            <Database className="feature-icon" size={24} />
+            <Database className="feature-icon" size={24} aria-hidden="true" />
           </div>
           <h3>Agentic Lore Generation</h3>
           <p>Collaborate with multi-agent pipelines to craft deeply immersive worlds with complete consistency.</p>
