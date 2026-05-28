@@ -4,10 +4,8 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 from uuid import UUID, uuid4
-
-from neo4j import Driver
 
 from app.schemas.world import (
     CampaignSessionCreate,
@@ -74,6 +72,10 @@ class WorldLLM(Protocol):
     ) -> str | None: ...
 
 
+class Neo4jDriverLike(Protocol):
+    def session(self) -> Any: ...
+
+
 @dataclass
 class _WorldRecord:
     id: UUID
@@ -85,11 +87,36 @@ class _WorldRecord:
 
 
 class WorldService:
-    def __init__(self, driver: Driver, llm: WorldLLM | None = None) -> None:
+    def __init__(self, driver: Neo4jDriverLike, llm: WorldLLM | None = None) -> None:
         self._driver = driver
         self._llm = llm
+        self._world_cache: dict[UUID, _WorldRecord] = {}
+
+    def initialize_schema(self) -> None:
+        """Create lookup constraints used by the service's hot queries."""
+        queries = [
+            "CREATE CONSTRAINT world_id_unique IF NOT EXISTS FOR (w:World) REQUIRE w.id IS UNIQUE",
+            "CREATE CONSTRAINT entity_id_unique IF NOT EXISTS FOR (e:Entity) REQUIRE e.id IS UNIQUE",
+            "CREATE INDEX entity_world_id IF NOT EXISTS FOR (e:Entity) ON (e.world_id)",
+            "CREATE INDEX relationship_world_id IF NOT EXISTS FOR ()-[r:RELATED_TO]-() ON (r.world_id)",
+            "CREATE INDEX canon_issue_world_id IF NOT EXISTS FOR (i:CanonIssue) ON (i.world_id)",
+            "CREATE INDEX canon_suggestion_world_id IF NOT EXISTS FOR (s:CanonSuggestion) ON (s.world_id)",
+            "CREATE INDEX timeline_event_world_id IF NOT EXISTS FOR (t:TimelineEvent) ON (t.world_id)",
+            "CREATE INDEX graph_view_world_id IF NOT EXISTS FOR (v:GraphView) ON (v.world_id)",
+            "CREATE INDEX planning_board_world_id IF NOT EXISTS FOR (b:PlanningBoard) ON (b.world_id)",
+            "CREATE INDEX campaign_session_world_id IF NOT EXISTS FOR (cs:CampaignSession) ON (cs.world_id)",
+            "CREATE INDEX lore_note_world_id IF NOT EXISTS FOR (ln:LoreNote) ON (ln.world_id)",
+            "CREATE INDEX faction_clock_world_id IF NOT EXISTS FOR (fc:FactionClock) ON (fc.world_id)",
+            "CREATE INDEX draft_passage_world_id IF NOT EXISTS FOR (d:DraftPassage) ON (d.world_id)",
+            "CREATE INDEX revision_version_world_id IF NOT EXISTS FOR (r:RevisionVersion) ON (r.world_id)",
+        ]
+        with self._driver.session() as session:
+            for query in queries:
+                session.run(query)
 
     def _get_record(self, world_id: UUID) -> _WorldRecord | None:
+        if cached := self._world_cache.get(world_id):
+            return cached
         query = """
         MATCH (w)
         WHERE "World" IN labels(w) AND properties(w).id = $id
@@ -100,7 +127,9 @@ class WorldService:
             record = result.single()
             if not record:
                 return None
-            return self._world_from_props(record.get("props", record))
+            world = self._world_from_props(record.get("props", record))
+            self._world_cache[world.id] = world
+            return world
 
     def create(self, data: WorldCreate) -> WorldRead:
         wid = uuid4()
@@ -128,6 +157,7 @@ class WorldService:
             seed=data.seed,
             created_at=now,
         )
+        self._world_cache[wid] = rec
         return self._to_read(rec)
 
     def create_demo_world(self) -> DemoWorldResponse:
@@ -210,7 +240,9 @@ class WorldService:
         with self._driver.session() as session:
             result = session.run(query)
             for record in result:
-                worlds.append(self._to_read(self._world_from_props(record.get("props", record))))
+                world = self._world_from_props(record.get("props", record))
+                self._world_cache[world.id] = world
+                worlds.append(self._to_read(world))
         return worlds
 
     def get(self, world_id: UUID) -> WorldRead | None:
@@ -244,6 +276,8 @@ class WorldService:
             session.run(delete_issue_query, w_id=str(world_id))
             result = session.run(delete_world_query, w_id=str(world_id))
             record = result.single()
+            if record and record["deleted"]:
+                self._world_cache.pop(world_id, None)
             return bool(record and record["deleted"])
 
     def generate_stub(
@@ -945,6 +979,7 @@ class WorldService:
         elif mode == "create_relationship":
             source_id = payload.get("source_entity_id")
             target_id = payload.get("target_entity_id")
+            strength = payload.get("strength")
             if not source_id or not target_id:
                 raise ValueError("Relationship suggestions require source and target entities")
             relationship = self.create_relationship(
@@ -954,23 +989,25 @@ class WorldService:
                 relation_type=str(payload.get("relation_type") or suggestion.suggested_type or "related_to"),
                 notes=str(payload.get("notes") or content),
                 category=str(payload["category"]) if payload.get("category") else None,
-                strength=int(payload["strength"]) if payload.get("strength") else None,
+                strength=int(str(strength)) if strength is not None else None,
                 history=str(payload["history"]) if payload.get("history") else None,
                 stance=str(payload["stance"]) if payload.get("stance") else None,
             )
             status_value = "accepted"
         elif mode == "create_timeline_event":
+            raw_event_order = payload.get("event_order")
+            raw_participants = payload.get("participants")
             next_order = len(self.list_timeline_events(world_id) or []) + 1
             participants = [
                 UUID(str(item))
-                for item in payload.get("participants", [])
+                for item in raw_participants
                 if self._looks_like_uuid(str(item))
-            ] if isinstance(payload.get("participants"), list) else []
+            ] if isinstance(raw_participants, list) else []
             timeline_event = self.create_timeline_event(
                 world_id,
                 TimelineEventCreate(
                     title=str(payload.get("title") or suggestion.suggested_name or "Draft event"),
-                    event_order=int(payload.get("event_order") or next_order),
+                    event_order=int(str(raw_event_order)) if raw_event_order is not None else next_order,
                     description=str(payload.get("description") or content),
                     participants=participants,
                     date_label=str(payload["date_label"]) if payload.get("date_label") else None,
@@ -1691,7 +1728,11 @@ class WorldService:
                 source_type="draft",
                 source_id=draft_id,
                 source_excerpt=excerpt,
-                payload=dict(candidate.get("payload") or {}),
+                payload=(
+                    dict(payload)
+                    if isinstance((payload := candidate.get("payload")), dict)
+                    else {}
+                ),
             )
             for candidate in candidates
         ]

@@ -7,6 +7,7 @@ from app.deps import get_llm_service, get_world_service
 from app.main import app
 from app.services.world_service import WorldService
 
+
 class _FakeResult:
     def __init__(self, records):
         self._records = records

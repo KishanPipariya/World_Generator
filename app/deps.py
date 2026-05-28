@@ -11,6 +11,7 @@ _driver = GraphDatabase.driver(
 )
 _llm_service = build_llm_service()
 _world_service = WorldService(driver=_driver, llm=_llm_service)
+_schema_initialized = False
 
 
 def get_llm_service() -> LLMService:
@@ -18,4 +19,8 @@ def get_llm_service() -> LLMService:
 
 
 def get_world_service() -> WorldService:
+    global _schema_initialized
+    if not _schema_initialized:
+        _world_service.initialize_schema()
+        _schema_initialized = True
     return _world_service

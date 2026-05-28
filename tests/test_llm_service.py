@@ -9,9 +9,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.config import Settings
+from app.config import Settings, load_settings
 from app.schemas.world import WorldRead
-from app.config import load_settings
 from app.services.llm_service import LLMService, _LlamaCppBackend, _VllmBackend, _world_context
 
 

@@ -5,6 +5,7 @@ from uuid import UUID
 from app.schemas.world import ConsistencyIssueUpdate, WorldCreate
 from app.services.world_service import WorldService
 
+
 class _FakeResult:
     def __init__(self, records):
         self._records = records

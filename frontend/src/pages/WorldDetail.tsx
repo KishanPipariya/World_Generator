@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -83,7 +83,8 @@ import {
 } from '../lib/api';
 import { buildWorldGraph, searchWorldGraph } from '../lib/worldGraph';
 import './WorldDetail.css';
-import WorldGraphView from './WorldGraphView';
+
+const WorldGraphView = lazy(() => import('./WorldGraphView'));
 
 const ENTITY_GROUPS = ['Character', 'Location', 'Faction', 'Concept', 'Event', 'Other'];
 const ENTITY_TYPES = ['Character', 'Location', 'Faction', 'Concept', 'Event', 'Other'];
@@ -2399,15 +2400,17 @@ const WorldDetail = () => {
                 <span><i className="legend-swatch selected" />Selected</span>
               </div>
               <div className="graph-canvas">
-                <WorldGraphView
-                  nodes={graphData.nodes}
-                  edges={graphData.edges}
-                  onSelectEntity={selectEntity}
-                  onSelectRelationship={setSelectedRelationshipId}
-                  onPositionsChange={setGraphPositions}
-                  onCreateEntity={handleCreateEntityFromGraph}
-                  resetKey={graphResetKey}
-                />
+                <Suspense fallback={<div className="loading-state" role="status">Loading graph...</div>}>
+                  <WorldGraphView
+                    nodes={graphData.nodes}
+                    edges={graphData.edges}
+                    onSelectEntity={selectEntity}
+                    onSelectRelationship={setSelectedRelationshipId}
+                    onPositionsChange={setGraphPositions}
+                    onCreateEntity={handleCreateEntityFromGraph}
+                    resetKey={graphResetKey}
+                  />
+                </Suspense>
               </div>
               <section className="graph-summary" aria-labelledby="graph-summary-heading">
                 <h3 id="graph-summary-heading">Accessible graph summary</h3>
