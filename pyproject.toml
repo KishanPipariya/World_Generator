@@ -8,13 +8,9 @@ dependencies = [
     "fastapi>=0.115.0",
     "httpx>=0.28.1",
     "neo4j>=6.1.0",
+    "openai>=1.0.0",
     "python-dotenv>=1.2.2",
     "uvicorn[standard]>=0.32.0",
-]
-
-[project.optional-dependencies]
-local-llm = [
-    "llama-cpp-python",
 ]
 
 [dependency-groups]
@@ -28,9 +24,6 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-markers = [
-    "local_llm: loads the configured local GGUF model and runs real inference",
-]
 
 [tool.ruff]
 target-version = "py313"

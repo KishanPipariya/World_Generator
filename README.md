@@ -26,9 +26,9 @@ For longer-term product direction, see
 - Saved draft passages/scenes with linked canon and stored passage-check history.
 - Markdown exports for full world bibles, dossiers, briefs, gazetteers, timelines,
   and Obsidian-style output.
-- Optional local LLM support through llama.cpp GGUF models or a vLLM
-  OpenAI-compatible server. When no LLM is configured, generation endpoints return
-  deterministic stubs so the app remains usable.
+- Optional LLM support through OpenRouter. When no OpenRouter credentials and
+  model are configured, generation endpoints return deterministic stubs so the
+  app remains usable.
 
 ## Requirements
 
@@ -43,12 +43,6 @@ Install backend dependencies:
 
 ```bash
 uv sync
-```
-
-Install the optional llama.cpp dependency only if you want local GGUF inference:
-
-```bash
-uv sync --extra local-llm
 ```
 
 Install frontend dependencies:
@@ -98,31 +92,37 @@ Vite will print the local app URL, usually `http://localhost:5173`.
 
 ## LLM Configuration
 
-LLM use is optional. The app chooses a backend with
-`WORLD_GENERATOR_LLM_BACKEND`:
+LLM use is optional. The app supports OpenRouter or disabled mode through
+`WORLD_GENERATOR_LLM_BACKEND`. OpenRouter calls are made through the OpenAI
+Python SDK using OpenRouter's OpenAI-compatible `base_url`.
 
-- `auto`: use a configured GGUF model if present, otherwise use vLLM if
-  configured, otherwise disable LLM calls.
+- `openrouter`: use the OpenRouter chat completions API when both an API key and
+  model are configured. This is the default.
 - `none`: disable LLM calls.
-- `llama`: use llama.cpp through `llama-cpp-python`.
-- `vllm`: use an OpenAI-compatible vLLM server.
 
 Useful variables:
 
 ```text
-WORLD_GENERATOR_GGUF_PATH=/path/to/model.gguf
-WORLD_GENERATOR_LLAMA_N_CTX=4096
-WORLD_GENERATOR_LLAMA_N_GPU_LAYERS=0
+WORLD_GENERATOR_LLM_BACKEND=openrouter
+WORLD_GENERATOR_OPENROUTER_API_KEY=sk-or-...
+WORLD_GENERATOR_OPENROUTER_MODEL=openai/gpt-4.1-mini
+WORLD_GENERATOR_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+WORLD_GENERATOR_OPENROUTER_HTTP_REFERER=https://your-app.example
+WORLD_GENERATOR_OPENROUTER_APP_TITLE=Literary World Generator
 WORLD_GENERATOR_LLM_MAX_TOKENS=768
 WORLD_GENERATOR_LLM_TEMPERATURE=0.65
-
-WORLD_GENERATOR_VLLM_BASE_URL=http://127.0.0.1:8000/v1
-WORLD_GENERATOR_VLLM_MODEL=Qwen/Qwen2.5-1.5B-Instruct
-WORLD_GENERATOR_VLLM_API_KEY=optional-key
 ```
 
+`WORLD_GENERATOR_OPENROUTER_BASE_URL` should normally stay at
+`https://openrouter.ai/api/v1`; it is passed to `OpenAI(base_url=...)`.
+`WORLD_GENERATOR_OPENROUTER_HTTP_REFERER` and
+`WORLD_GENERATOR_OPENROUTER_APP_TITLE` are optional OpenRouter attribution
+headers sent with each chat completion request.
+
 `GET /api/v1/health` reports the selected LLM mode and whether generation is
-enabled.
+enabled. If the backend is `openrouter` but either API key or model is missing,
+the app reports `{"mode": "none", "enabled": false}` and continues without LLM
+calls.
 
 ## API Examples
 
@@ -217,7 +217,8 @@ npm run build
 - `app/schemas/world.py` - Pydantic request and response models.
 - `app/services/world_service.py` - Neo4j-backed world, canon, planning, draft,
   export, and consistency logic.
-- `app/services/llm_service.py` - Optional llama.cpp and vLLM integration.
+- `app/services/llm_service.py` - Optional OpenRouter integration using the
+  OpenAI Python SDK.
 - `frontend/` - React and Vite frontend.
 - `tests/` - Pytest coverage for API, service, DB, and LLM behavior.
 - `docker-compose.yml` - Local Neo4j service.

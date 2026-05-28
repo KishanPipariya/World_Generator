@@ -587,7 +587,7 @@ class _FakeDriver:
 
 
 class _HealthLLM:
-    mode = "vllm"
+    mode = "openrouter"
 
     def enabled(self) -> bool:
         return True
@@ -621,7 +621,7 @@ def test_health_includes_llm_status(client: TestClient) -> None:
     assert r.status_code == 200
     data = r.json()
     assert data["status"] == "ok"
-    assert data["llm"] == {"mode": "vllm", "enabled": True}
+    assert data["llm"] == {"mode": "openrouter", "enabled": True}
 
 
 def test_create_list_get_world(client: TestClient) -> None:

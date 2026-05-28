@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-import os
-import sys
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from app.config import Settings, load_settings
+from app.config import Settings
 from app.schemas.world import WorldRead
-from app.services.llm_service import LLMService, _LlamaCppBackend, _VllmBackend, _world_context
+from app.services.llm_service import LLMService, _OpenRouterBackend, _world_context
 
 
 def _base_settings(**overrides: Any) -> Settings:
@@ -19,48 +15,69 @@ def _base_settings(**overrides: Any) -> Settings:
         neo4j_uri="bolt://localhost:7687",
         neo4j_user="neo4j",
         neo4j_password="password",
-        llm_backend="auto",
-        gguf_path=None,
-        vllm_base_url=None,
-        vllm_model="test-model",
-        vllm_api_key=None,
-        llama_n_ctx=4096,
-        llama_n_gpu_layers=0,
-        llama_max_tokens=128,
-        llama_temperature=0.5,
+        llm_backend="openrouter",
+        openrouter_api_key="secret",
+        openrouter_model="test-model",
+        openrouter_base_url="https://openrouter.ai/api/v1",
+        openrouter_http_referer=None,
+        openrouter_app_title=None,
+        llm_max_tokens=128,
+        llm_temperature=0.5,
     )
     return replace(s, **overrides) if overrides else s
 
 
+def _world() -> WorldRead:
+    return WorldRead.model_validate(
+        {
+            "id": "550e8400-e29b-41d4-a716-446655440000",
+            "title": "My World",
+            "tone": None,
+            "era_notes": None,
+            "seed": None,
+            "created_at": "2020-01-01T00:00:00Z",
+        }
+    )
+
+
+def _completion(content: str | None = None, *, choices: list[Any] | None = None) -> SimpleNamespace:
+    if choices is None:
+        choices = [SimpleNamespace(message=SimpleNamespace(content=content))]
+    return SimpleNamespace(choices=choices)
+
+
+def _mock_openai_client(*completions: SimpleNamespace) -> tuple[MagicMock, MagicMock]:
+    mock_client = MagicMock()
+    create = mock_client.chat.completions.create
+    create.side_effect = list(completions) if len(completions) > 1 else None
+    if len(completions) == 1:
+        create.return_value = completions[0]
+    mock_openai = MagicMock(return_value=mock_client)
+    return mock_openai, mock_client
+
+
 def test_resolve_mode_none_when_backend_explicitly_none() -> None:
-    s = _base_settings(llm_backend="none")
-    svc = LLMService(s)
+    svc = LLMService(_base_settings(llm_backend="none"))
     assert svc.mode == "none"
     assert not svc.enabled()
 
 
-def test_resolve_mode_vllm_when_auto_and_url_set() -> None:
-    s = _base_settings(vllm_base_url="http://127.0.0.1:8000/v1")
-    svc = LLMService(s)
-    assert svc.mode == "vllm"
+def test_resolve_mode_none_when_openrouter_key_missing() -> None:
+    svc = LLMService(_base_settings(openrouter_api_key=None))
+    assert svc.mode == "none"
+    assert not svc.enabled()
+
+
+def test_resolve_mode_none_when_openrouter_model_missing() -> None:
+    svc = LLMService(_base_settings(openrouter_model=None))
+    assert svc.mode == "none"
+    assert not svc.enabled()
+
+
+def test_resolve_mode_openrouter_when_key_and_model_present() -> None:
+    svc = LLMService(_base_settings())
+    assert svc.mode == "openrouter"
     assert svc.enabled()
-
-
-def test_resolve_mode_llama_when_auto_and_gguf_file_exists(tmp_path) -> None:
-    fake_gguf = tmp_path / "model.gguf"
-    fake_gguf.write_bytes(b"gguf")
-    s = _base_settings(gguf_path=str(fake_gguf))
-    svc = LLMService(s)
-    assert svc.mode == "llama"
-    assert svc.enabled()
-
-
-def test_resolve_mode_prefers_llama_over_vllm_when_both_available(tmp_path) -> None:
-    fake_gguf = tmp_path / "model.gguf"
-    fake_gguf.write_bytes(b"x")
-    s = _base_settings(gguf_path=str(fake_gguf), vllm_base_url="http://127.0.0.1:1/v1")
-    svc = LLMService(s)
-    assert svc.mode == "llama"
 
 
 def test_world_context_includes_optional_fields() -> None:
@@ -81,220 +98,81 @@ def test_world_context_includes_optional_fields() -> None:
     assert "Seed / motif: s1" in ctx
 
 
-def test_vllm_backend_chat_strips_message_content() -> None:
+def test_openrouter_backend_uses_openai_sdk_chat_completion_request() -> None:
     s = _base_settings(
-        llm_backend="vllm",
-        vllm_base_url="http://example/v1",
-        vllm_model="m",
+        openrouter_model="m",
+        openrouter_http_referer="https://example.test",
+        openrouter_app_title="World Generator",
+        llm_max_tokens=16,
+        llm_temperature=0.1,
     )
+    mock_openai, mock_client = _mock_openai_client(_completion("  answer  "))
 
-    mock_response = MagicMock()
-    mock_response.raise_for_status = MagicMock()
-    mock_response.json.return_value = {"choices": [{"message": {"content": "  answer  "}}]}
-
-    mock_client = MagicMock()
-    mock_client.post.return_value = mock_response
-    mock_client.__enter__.return_value = mock_client
-    mock_client.__exit__.return_value = None
-
-    with patch("app.services.llm_service.httpx.Client", return_value=mock_client):
-        backend = _VllmBackend(s)
-        out = backend.chat([{"role": "user", "content": "hi"}])
+    with patch("app.services.llm_service.OpenAI", mock_openai):
+        out = _OpenRouterBackend(s).chat([{"role": "user", "content": "hi"}])
 
     assert out == "answer"
-    mock_client.post.assert_called_once()
-    call_kw = mock_client.post.call_args
-    assert call_kw[0][0] == "http://example/v1/chat/completions"
-    payload = call_kw[1]["json"]
-    assert payload["model"] == "m"
-    assert payload["messages"] == [{"role": "user", "content": "hi"}]
-
-
-def test_vllm_backend_sends_bearer_when_api_key_set() -> None:
-    s = _base_settings(
-        llm_backend="vllm",
-        vllm_base_url="http://example/v1",
-        vllm_api_key="secret",
+    mock_openai.assert_called_once_with(api_key="secret", base_url="https://openrouter.ai/api/v1")
+    mock_client.chat.completions.create.assert_called_once_with(
+        model="m",
+        messages=[{"role": "user", "content": "hi"}],
+        max_tokens=16,
+        temperature=0.1,
+        extra_headers={
+            "HTTP-Referer": "https://example.test",
+            "X-OpenRouter-Title": "World Generator",
+        },
     )
-    mock_response = MagicMock()
-    mock_response.raise_for_status = MagicMock()
-    mock_response.json.return_value = {"choices": [{"message": {"content": "x"}}]}
 
-    mock_client = MagicMock()
-    mock_client.post.return_value = mock_response
-    mock_client.__enter__.return_value = mock_client
-    mock_client.__exit__.return_value = None
 
-    with patch("app.services.llm_service.httpx.Client", return_value=mock_client):
-        _VllmBackend(s).chat([])
+def test_openrouter_backend_uses_configured_base_url() -> None:
+    s = _base_settings(openrouter_base_url="http://example/v1")
+    mock_openai, _mock_client = _mock_openai_client(_completion("x"))
 
-    headers = mock_client.post.call_args[1]["headers"]
-    assert headers["Authorization"] == "Bearer secret"
+    with patch("app.services.llm_service.OpenAI", mock_openai):
+        _OpenRouterBackend(s).chat([])
+
+    mock_openai.assert_called_once_with(api_key="secret", base_url="http://example/v1")
+
+
+def test_openrouter_backend_returns_empty_string_for_empty_or_missing_choices() -> None:
+    for completion in (_completion(choices=[]), SimpleNamespace()):
+        mock_openai, _mock_client = _mock_openai_client(completion)
+        with patch("app.services.llm_service.OpenAI", mock_openai):
+            assert _OpenRouterBackend(_base_settings()).chat([]) == ""
 
 
 def test_generate_section_returns_none_when_llm_disabled() -> None:
-    s = _base_settings(llm_backend="none")
-    svc = LLMService(s)
-    w = WorldRead.model_validate(
-        {
-            "id": "550e8400-e29b-41d4-a716-446655440000",
-            "title": "T",
-            "tone": None,
-            "era_notes": None,
-            "seed": None,
-            "created_at": "2020-01-01T00:00:00Z",
-        }
-    )
-    assert svc.generate_section(w, "glossary") is None
+    svc = LLMService(_base_settings(llm_backend="none"))
+    assert svc.generate_section(_world(), "glossary") is None
 
 
-def test_generate_section_uses_vllm_backend(tmp_path) -> None:
-    fake_gguf = tmp_path / "unused.gguf"
-    fake_gguf.write_bytes(b"x")
-    s = _base_settings(
-        llm_backend="vllm",
-        gguf_path=str(fake_gguf),
-        vllm_base_url="http://example/v1",
-    )
-    mock_response = MagicMock()
-    mock_response.raise_for_status = MagicMock()
-    mock_response.json.return_value = {"choices": [{"message": {"content": "glossary text"}}]}
+def test_generate_section_uses_openrouter_backend() -> None:
+    mock_openai, mock_client = _mock_openai_client(_completion("glossary text"))
 
-    mock_client = MagicMock()
-    mock_client.post.return_value = mock_response
-    mock_client.__enter__.return_value = mock_client
-    mock_client.__exit__.return_value = None
-
-    w = WorldRead.model_validate(
-        {
-            "id": "550e8400-e29b-41d4-a716-446655440000",
-            "title": "My World",
-            "tone": None,
-            "era_notes": None,
-            "seed": None,
-            "created_at": "2020-01-01T00:00:00Z",
-        }
-    )
-
-    with patch("app.services.llm_service.httpx.Client", return_value=mock_client):
-        svc = LLMService(s)
-        assert svc.mode == "vllm"
-        out = svc.generate_section(w, "glossary")
+    with patch("app.services.llm_service.OpenAI", mock_openai):
+        svc = LLMService(_base_settings())
+        assert svc.mode == "openrouter"
+        out = svc.generate_section(_world(), "glossary")
 
     assert out == "glossary text"
+    messages = mock_client.chat.completions.create.call_args.kwargs["messages"]
+    assert messages[0]["role"] == "system"
+    assert messages[1]["role"] == "user"
 
 
-@patch("app.services.llm_service._LlamaCppBackend.chat")
-def test_generate_section_returns_none_on_llama_exception(mock_chat, tmp_path) -> None:
-    fake_gguf = tmp_path / "model.gguf"
-    fake_gguf.write_bytes(b"x")
-    s = _base_settings(llm_backend="llama", gguf_path=str(fake_gguf))
-    mock_chat.side_effect = RuntimeError("inference failed")
+def test_generate_section_returns_none_on_backend_exception() -> None:
+    svc = LLMService(_base_settings())
+    w = _world()
+    with patch.object(svc._backend, "chat", side_effect=RuntimeError("inference failed")):
+        assert svc.generate_section(w, "glossary") is None
 
-    svc = LLMService(s)
-    w = WorldRead.model_validate(
-        {
-            "id": "550e8400-e29b-41d4-a716-446655440000",
-            "title": "T",
-            "tone": None,
-            "era_notes": None,
-            "seed": None,
-            "created_at": "2020-01-01T00:00:00Z",
-        }
+
+def test_generate_agentic_uses_author_and_critic() -> None:
+    mock_openai, mock_client = _mock_openai_client(
+        _completion("author output"),
+        _completion("critic output"),
     )
-    assert svc.generate_section(w, "glossary") is None
-
-
-def test_llama_backend_loads_configured_model_and_generates_text(monkeypatch, tmp_path) -> None:
-    fake_gguf = tmp_path / "model.gguf"
-    fake_gguf.write_bytes(b"GGUF")
-    captured: dict[str, Any] = {}
-
-    class _FakeLlama:
-        def __init__(self, **kwargs: Any) -> None:
-            captured.update(kwargs)
-
-        def create_chat_completion(self, **kwargs: Any) -> dict[str, Any]:
-            captured["completion"] = kwargs
-            return {"choices": [{"message": {"content": "  local text  "}}]}
-
-    monkeypatch.setitem(sys.modules, "llama_cpp", SimpleNamespace(Llama=_FakeLlama))
-    s = _base_settings(
-        llm_backend="llama",
-        gguf_path=str(fake_gguf),
-        llama_n_ctx=512,
-        llama_n_gpu_layers=0,
-        llama_max_tokens=16,
-        llama_temperature=0.1,
-    )
-
-    backend = _LlamaCppBackend(s)
-    out = backend.chat([{"role": "user", "content": "Say one short sentence."}])
-
-    assert out == "local text"
-    assert captured["model_path"] == str(fake_gguf)
-    assert captured["n_ctx"] == 512
-    assert captured["n_gpu_layers"] == 0
-    assert captured["completion"]["max_tokens"] == 16
-    assert captured["completion"]["messages"] == [
-        {"role": "user", "content": "Say one short sentence."}
-    ]
-
-
-@pytest.mark.local_llm
-def test_local_llm_loads_and_generates_text() -> None:
-    if os.environ.get("WORLD_GENERATOR_RUN_LOCAL_LLM_TESTS") != "1":
-        pytest.skip("Set WORLD_GENERATOR_RUN_LOCAL_LLM_TESTS=1 to load the local GGUF model.")
-    pytest.importorskip("llama_cpp")
-
-    settings = replace(
-        load_settings(),
-        llm_backend="llama",
-        llama_n_ctx=int(os.environ.get("WORLD_GENERATOR_TEST_LLAMA_N_CTX", "512")),
-        llama_max_tokens=int(os.environ.get("WORLD_GENERATOR_TEST_LLM_MAX_TOKENS", "24")),
-        llama_temperature=0.1,
-    )
-    if not settings.gguf_path or not os.path.isfile(settings.gguf_path):
-        pytest.fail("Local GGUF model path is not configured or does not exist.")
-
-    svc = LLMService(settings)
-    assert svc.mode == "llama"
-    assert svc.enabled()
-
-    world = WorldRead.model_validate(
-        {
-            "id": "550e8400-e29b-41d4-a716-446655440000",
-            "title": "Test Lantern",
-            "tone": "clear and concise",
-            "era_notes": "A small test world used only to verify local inference.",
-            "seed": None,
-            "created_at": "2020-01-01T00:00:00Z",
-        }
-    )
-
-    text = svc.generate_section(world, "glossary")
-
-    assert text is not None
-    assert text.strip()
-
-
-def test_generate_agentic_uses_author_and_critic(tmp_path) -> None:
-    fake_gguf = tmp_path / "unused.gguf"
-    fake_gguf.write_bytes(b"x")
-    s = _base_settings(
-        llm_backend="vllm",
-        gguf_path=str(fake_gguf),
-        vllm_base_url="http://example/v1",
-    )
-    mock_response_1 = MagicMock()
-    mock_response_1.json.return_value = {"choices": [{"message": {"content": "author output"}}]}
-    mock_response_2 = MagicMock()
-    mock_response_2.json.return_value = {"choices": [{"message": {"content": "critic output"}}]}
-    
-    mock_client = MagicMock()
-    mock_client.post.side_effect = [mock_response_1, mock_response_2]
-    mock_client.__enter__.return_value = mock_client
-    mock_client.__exit__.return_value = None
 
     w = WorldRead.model_validate(
         {
@@ -307,8 +185,22 @@ def test_generate_agentic_uses_author_and_critic(tmp_path) -> None:
         }
     )
 
-    with patch("app.services.llm_service.httpx.Client", return_value=mock_client):
-        svc = LLMService(s)
-        out = svc.generate_agentic(w, "context string", "instruction test")
+    with patch("app.services.llm_service.OpenAI", mock_openai):
+        out = LLMService(_base_settings()).generate_agentic(w, "context string", "instruction test")
 
     assert out == "critic output"
+    assert mock_client.chat.completions.create.call_count == 2
+
+
+def test_generate_agentic_returns_author_text_when_critic_fails() -> None:
+    svc = LLMService(_base_settings())
+    assert svc._backend is not None
+
+    with patch.object(
+        svc._backend,
+        "chat",
+        side_effect=["author output", RuntimeError("critic failed")],
+    ):
+        out = svc.generate_agentic(_world(), "context string", "instruction test")
+
+    assert out == "author output"

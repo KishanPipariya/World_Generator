@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import logging
-import os
-import threading
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
-import httpx
+from openai import OpenAI
 
 from app.config import Settings, load_settings
 
@@ -49,110 +47,62 @@ def _messages_for_section(world: WorldRead, section: Section) -> list[dict[str, 
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
-def _resolve_mode(settings: Settings) -> Literal["none", "llama", "vllm"]:
-    b = settings.llm_backend
-    if b == "none":
+def _resolve_mode(settings: Settings) -> Literal["none", "openrouter"]:
+    if settings.llm_backend == "none":
         return "none"
-    if b == "llama":
-        path = settings.gguf_path
-        return "llama" if path and os.path.isfile(path) else "none"
-    if b == "vllm":
-        return "vllm" if settings.vllm_base_url else "none"
-    # auto
-    if settings.gguf_path and os.path.isfile(settings.gguf_path):
-        return "llama"
-    if settings.vllm_base_url:
-        return "vllm"
+    if settings.openrouter_api_key and settings.openrouter_model:
+        return "openrouter"
     return "none"
 
 
-class _LlamaCppBackend:
+class _OpenRouterBackend:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._lock = threading.Lock()
-        self._llm: Any = None
+        key = settings.openrouter_api_key
+        assert key is not None
+        self._client = OpenAI(api_key=key, base_url=settings.openrouter_base_url)
 
-    def _ensure(self) -> Any:
-        if self._llm is not None:
-            return self._llm
-        from llama_cpp import Llama
+    def chat(self, messages: list[dict[str, str]]) -> str:
+        key = self._settings.openrouter_api_key
+        model = self._settings.openrouter_model
+        assert key is not None
+        assert model is not None
 
-        path = self._settings.gguf_path
-        assert path is not None
-        self._llm = Llama(
-            model_path=path,
-            n_ctx=self._settings.llama_n_ctx,
-            n_gpu_layers=self._settings.llama_n_gpu_layers,
-            verbose=False,
+        headers: dict[str, str] = {}
+        if self._settings.openrouter_http_referer:
+            headers["HTTP-Referer"] = self._settings.openrouter_http_referer
+        if self._settings.openrouter_app_title:
+            headers["X-OpenRouter-Title"] = self._settings.openrouter_app_title
+
+        completion = self._client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_tokens=self._settings.llm_max_tokens,
+            temperature=self._settings.llm_temperature,
+            extra_headers=headers or None,
         )
-        return self._llm
-
-    def chat(self, messages: list[dict[str, str]]) -> str:
-        llm = self._ensure()
-        with self._lock:
-            out = llm.create_chat_completion(
-                messages=messages,
-                max_tokens=self._settings.llama_max_tokens,
-                temperature=self._settings.llama_temperature,
-            )
-        choice = out["choices"][0]
-        msg = choice.get("message") or {}
-        content = msg.get("content")
-        if isinstance(content, str) and content.strip():
-            return content.strip()
-        # Some builds return text in a different shape
-        text = choice.get("text")
-        if isinstance(text, str) and text.strip():
-            return text.strip()
-        return ""
-
-
-class _VllmBackend:
-    def __init__(self, settings: Settings) -> None:
-        self._settings = settings
-        base = settings.vllm_base_url
-        assert base is not None
-        self._url = f"{base}/chat/completions"
-
-    def chat(self, messages: list[dict[str, str]]) -> str:
-        headers: dict[str, str] = {"Content-Type": "application/json"}
-        key = self._settings.vllm_api_key
-        if key:
-            headers["Authorization"] = f"Bearer {key}"
-        payload = {
-            "model": self._settings.vllm_model,
-            "messages": messages,
-            "max_tokens": self._settings.llama_max_tokens,
-            "temperature": self._settings.llama_temperature,
-        }
-        with httpx.Client(timeout=120.0) as client:
-            r = client.post(self._url, json=payload, headers=headers)
-            r.raise_for_status()
-            data = r.json()
-        choices = data.get("choices") or []
+        choices = getattr(completion, "choices", None) or []
         if not choices:
             return ""
-        msg = choices[0].get("message") or {}
-        content = msg.get("content")
+        msg = getattr(choices[0], "message", None)
+        content = getattr(msg, "content", None)
         if isinstance(content, str) and content.strip():
             return content.strip()
         return ""
 
 
 class LLMService:
-    """Local llama.cpp (GGUF) or remote vLLM (OpenAI-compatible HTTP)."""
+    """Optional OpenRouter chat completion integration."""
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._mode = _resolve_mode(settings)
-        self._backend: _LlamaCppBackend | _VllmBackend | None = None
-        if self._mode == "llama":
-            self._backend = _LlamaCppBackend(settings)
-        elif self._mode == "vllm":
-            self._backend = _VllmBackend(settings)
+        self._backend: _OpenRouterBackend | None = None
+        if self._mode == "openrouter":
+            self._backend = _OpenRouterBackend(settings)
 
     @property
-    def mode(self) -> Literal["none", "llama", "vllm"]:
+    def mode(self) -> Literal["none", "openrouter"]:
         return self._mode
 
     def enabled(self) -> bool:
@@ -164,11 +114,6 @@ class LLMService:
         messages = _messages_for_section(world, section)
         try:
             text = self._backend.chat(messages)
-        except ImportError:
-            logger.warning(
-                "LLM dependency missing; for GGUF models install with: uv sync --extra local-llm"
-            )
-            return None
         except Exception:
             logger.exception("LLM generation failed for section %s", section)
             return None
@@ -177,7 +122,7 @@ class LLMService:
     def generate_agentic(self, world: WorldRead, context: str, instruction: str) -> str | None:
         if not self.enabled() or self._backend is None:
             return None
-        
+
         # 1. Author Agent
         author_system = (
             "You are a creative world-building Author. "
