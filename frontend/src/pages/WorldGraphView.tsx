@@ -22,6 +22,7 @@ interface WorldGraphViewProps {
   onSelectEntity: (entityId: string) => void;
   onSelectRelationship: (relationshipId: string) => void;
   onPositionsChange: (positions: Record<string, { x: number; y: number }>) => void;
+  onCreateEntity: () => void;
   resetKey: number;
 }
 
@@ -44,6 +45,7 @@ const WorldGraphView = ({
   onSelectEntity,
   onSelectRelationship,
   onPositionsChange,
+  onCreateEntity,
   resetKey,
 }: WorldGraphViewProps) => {
   const [flowNodes, setNodes, onNodesChange] = useNodesState<Node>(nodes);
@@ -61,7 +63,10 @@ const WorldGraphView = ({
     return (
       <div className="graph-empty-state" role="status">
         <h3>No entities yet</h3>
-        <p className="text-muted">Create entities in the editor to populate the graph.</p>
+        <p className="text-muted">Create entities in Canon to populate the graph.</p>
+        <button className="btn btn-primary" type="button" onClick={onCreateEntity}>
+          Create Entity
+        </button>
       </div>
     );
   }

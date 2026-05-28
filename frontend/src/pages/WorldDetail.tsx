@@ -133,7 +133,7 @@ const PROMPTS = [
 ];
 
 type EntityForm = Pick<Entity, 'name' | 'entity_type' | 'description' | 'structured_fields'>;
-type WorkspaceView = 'editor' | 'campaign' | 'graph';
+type WorkspaceView = 'canon' | 'drafts' | 'timeline' | 'planning' | 'campaign' | 'graph';
 
 const blankEntity: EntityForm = {
   name: '',
@@ -173,7 +173,10 @@ const WorldDetail = () => {
   const [revisions, setRevisions] = useState<RevisionVersion[]>([]);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [selectedRelationshipId, setSelectedRelationshipId] = useState<string | null>(null);
-  const [activeView, setActiveView] = useState<WorkspaceView>('editor');
+  const [activeView, setActiveView] = useState<WorkspaceView>('canon');
+  const [showAllRelationships, setShowAllRelationships] = useState(false);
+  const [showAllTimeline, setShowAllTimeline] = useState(false);
+  const [confirmReplaceGenerated, setConfirmReplaceGenerated] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [graphTypeFilter, setGraphTypeFilter] = useState('All');
   const [graphLayoutMode, setGraphLayoutMode] = useState<GraphLayoutMode>('manual');
@@ -356,6 +359,20 @@ const WorldDetail = () => {
       targetName: entityNames.get(relationship.target_entity_id) ?? relationship.target_entity_name,
     }));
   }, [graphEntities, graphRelationships]);
+
+  const visibleRelationships = useMemo(() => {
+    if (!selectedEntityId || showAllRelationships) return relationships;
+    return relationships.filter((relationship) => (
+      relationship.source_entity_id === selectedEntityId || relationship.target_entity_id === selectedEntityId
+    ));
+  }, [relationships, selectedEntityId, showAllRelationships]);
+
+  const visibleTimelineEvents = useMemo(() => {
+    if (!selectedEntityId || showAllTimeline) return timelineEvents;
+    return timelineEvents.filter((event) => event.participants.includes(selectedEntityId));
+  }, [selectedEntityId, showAllTimeline, timelineEvents]);
+
+  const selectedContextLabel = selectedEntity ? selectedEntity.name : 'selected entity';
 
   const loadWorkspace = async (worldId: string) => {
     setErrorMessage('');
@@ -601,7 +618,8 @@ const WorldDetail = () => {
 
   const handleDeleteWorld = async () => {
     if (!id || !world) return;
-    if (!window.confirm(`Delete "${world.title}" and all of its entities and relationships?`)) return;
+    const confirmation = window.prompt(`Type "${world.title}" to delete this world and all of its entities and relationships.`);
+    if (confirmation !== world.title) return;
     setBusy(true);
     setErrorMessage('');
     try {
@@ -649,14 +667,15 @@ const WorldDetail = () => {
     setGeneratedName('');
     setGeneratedType('Concept');
     setAgenticResult(null);
+    setConfirmReplaceGenerated(false);
   };
 
   const handleApplyGenerated = async (mode: 'append' | 'replace') => {
     if (!id || !selectedEntity || !agenticResult) return;
-    if (
-      mode === 'replace'
-      && !window.confirm(`Replace the full description for "${selectedEntity.name}" with the generated lore?`)
-    ) return;
+    if (mode === 'replace' && !confirmReplaceGenerated) {
+      setConfirmReplaceGenerated(true);
+      return;
+    }
     const description =
       mode === 'append'
         ? `${selectedEntity.description.trim()}\n\n${agenticResult.content}`.trim()
@@ -957,7 +976,7 @@ const WorldDetail = () => {
   };
 
   const handleIssueSelect = (issue: ConsistencyReport['issues'][number]) => {
-    setActiveView('editor');
+    setActiveView('canon');
     if (issue.entity_id) {
       selectEntity(issue.entity_id);
       return;
@@ -978,6 +997,11 @@ const WorldDetail = () => {
     if (id) {
       window.localStorage.removeItem(`world-graph-positions:${id}`);
     }
+  };
+
+  const handleCreateEntityFromGraph = () => {
+    setActiveView('canon');
+    selectEntity(null);
   };
 
   const handleSaveGraphView = async () => {
@@ -1174,7 +1198,7 @@ const WorldDetail = () => {
         </Link>
       </div>
 
-      <div className="world-header glass">
+      <div className="world-header">
         <div className="title-section">
           <h1>{world.title}</h1>
           <div className="tags">
@@ -1191,14 +1215,14 @@ const WorldDetail = () => {
             <Clock size={16} />
             <span>Created {new Date(world.created_at).toLocaleDateString()}</span>
           </div>
+          <Link to={`/wiki/${world.id}`} className="btn btn-primary">
+            <BookOpen size={16} />
+            Wiki
+          </Link>
           <button className="btn btn-secondary" onClick={handleConsistencyReport} disabled={busy}>
             <ClipboardCheck size={16} />
             Report
           </button>
-          <Link to={`/wiki/${world.id}`} className="btn btn-secondary">
-            <BookOpen size={16} />
-            Wiki
-          </Link>
           <button className="btn btn-secondary" onClick={handlePreviewExport} disabled={busy}>
             <FileText size={16} />
             Preview
@@ -1215,10 +1239,12 @@ const WorldDetail = () => {
             <Download size={16} />
             Export
           </button>
+          <div className="danger-actions" aria-label="Danger actions">
           <button className="btn btn-danger" onClick={handleDeleteWorld} disabled={busy} type="button">
             <Trash2 size={16} />
-            Delete
+            Delete World
           </button>
+          </div>
         </div>
       </div>
 
@@ -1509,16 +1535,52 @@ const WorldDetail = () => {
         <div className="editor-stack">
           <div className="workspace-tabs glass" role="tablist" aria-label="Workspace views">
             <button
-              className={activeView === 'editor' ? 'active' : ''}
-              onClick={() => setActiveView('editor')}
+              className={activeView === 'canon' ? 'active' : ''}
+              onClick={() => setActiveView('canon')}
               type="button"
               role="tab"
-              aria-selected={activeView === 'editor'}
-              aria-controls="editor-panel"
-              id="editor-tab"
+              aria-selected={activeView === 'canon'}
+              aria-controls="canon-panel"
+              id="canon-tab"
             >
               <Pencil size={16} />
-              Editor
+              Canon
+            </button>
+            <button
+              className={activeView === 'drafts' ? 'active' : ''}
+              onClick={() => setActiveView('drafts')}
+              type="button"
+              role="tab"
+              aria-selected={activeView === 'drafts'}
+              aria-controls="drafts-panel"
+              id="drafts-tab"
+            >
+              <FileText size={16} />
+              Drafts
+            </button>
+            <button
+              className={activeView === 'timeline' ? 'active' : ''}
+              onClick={() => setActiveView('timeline')}
+              type="button"
+              role="tab"
+              aria-selected={activeView === 'timeline'}
+              aria-controls="timeline-panel"
+              id="timeline-tab"
+            >
+              <Clock size={16} />
+              Timeline
+            </button>
+            <button
+              className={activeView === 'planning' ? 'active' : ''}
+              onClick={() => setActiveView('planning')}
+              type="button"
+              role="tab"
+              aria-selected={activeView === 'planning'}
+              aria-controls="planning-panel"
+              id="planning-tab"
+            >
+              <ClipboardCheck size={16} />
+              Planning
             </button>
             <button
               className={activeView === 'graph' ? 'active' : ''}
@@ -1546,9 +1608,9 @@ const WorldDetail = () => {
             </button>
           </div>
 
-          {activeView === 'editor' ? (
+          {activeView === 'drafts' ? (
             <>
-              <section className="glass content-section">
+              <section className="glass content-section" id="drafts-panel" role="tabpanel" aria-labelledby="drafts-tab">
                 <div className="section-header">
                   <FileText className="text-primary" />
                   <h2>Drafts</h2>
@@ -1577,33 +1639,39 @@ const WorldDetail = () => {
                     ))}
                   </div>
                   <form className="draft-editor" onSubmit={handleDraftSave}>
-                    <input
-                      className="form-input"
-                      aria-label="Draft title"
-                      value={draftForm.title}
-                      onChange={(event) => setDraftForm({ ...draftForm, title: event.target.value })}
-                      placeholder="Draft title"
-                      required
-                    />
-                    <textarea
-                      className="form-input"
-                      aria-label="Draft body"
-                      value={draftForm.body}
-                      onChange={(event) => {
-                        setDraftForm({ ...draftForm, body: event.target.value });
-                        setDraftSelection('');
-                      }}
-                      onSelect={handleDraftTextSelect}
-                      placeholder="Write or paste a scene draft, save it, then select an excerpt to extract"
-                      rows={8}
-                    />
-                    <input
-                      className="form-input"
-                      aria-label="Draft extraction instruction"
-                      value={draftInstruction}
-                      onChange={(event) => setDraftInstruction(event.target.value)}
-                      placeholder="Extraction focus"
-                    />
+                    <label className="field-label">
+                      <span>Draft title</span>
+                      <input
+                        className="form-input"
+                        value={draftForm.title}
+                        onChange={(event) => setDraftForm({ ...draftForm, title: event.target.value })}
+                        placeholder="Draft title"
+                        required
+                      />
+                    </label>
+                    <label className="field-label">
+                      <span>Draft body</span>
+                      <textarea
+                        className="form-input"
+                        value={draftForm.body}
+                        onChange={(event) => {
+                          setDraftForm({ ...draftForm, body: event.target.value });
+                          setDraftSelection('');
+                        }}
+                        onSelect={handleDraftTextSelect}
+                        placeholder="Write or paste a scene draft, save it, then select an excerpt to extract"
+                        rows={8}
+                      />
+                    </label>
+                    <label className="field-label">
+                      <span>Extraction focus</span>
+                      <input
+                        className="form-input"
+                        value={draftInstruction}
+                        onChange={(event) => setDraftInstruction(event.target.value)}
+                        placeholder="Optional instruction"
+                      />
+                    </label>
                     <div className="form-actions">
                       <button className="btn btn-primary" type="submit" disabled={busy}>
                         <Save size={16} />
@@ -1622,7 +1690,10 @@ const WorldDetail = () => {
                 </div>
               </section>
 
-              <section className="glass content-section" id="editor-panel" role="tabpanel" aria-labelledby="editor-tab">
+            </>
+          ) : activeView === 'canon' ? (
+            <>
+              <section className="glass content-section" id="canon-panel" role="tabpanel" aria-labelledby="canon-tab">
                 <div className="section-header">
                   <BookOpen className="text-secondary" />
                   <h2>{selectedEntity ? 'Entity Detail' : 'New Entity'}</h2>
@@ -1630,31 +1701,37 @@ const WorldDetail = () => {
                 </div>
                 <form onSubmit={handleEntitySubmit} className="entity-form">
                   <div className="form-row">
-                    <input
-                      aria-label="Entity name"
-                      value={entityForm.name}
-                      onChange={(event) => setEntityForm({ ...entityForm, name: event.target.value })}
-                      placeholder="Name"
-                      className="form-input"
-                      required
-                    />
-                    <select
-                      aria-label="Entity type"
-                      value={entityForm.entity_type}
-                      onChange={(event) => setEntityForm({ ...entityForm, entity_type: event.target.value })}
-                      className="form-input"
-                    >
-                      {ENTITY_TYPES.map((type) => <option key={type}>{type}</option>)}
-                    </select>
+                    <label className="field-label">
+                      <span>Entity name</span>
+                      <input
+                        value={entityForm.name}
+                        onChange={(event) => setEntityForm({ ...entityForm, name: event.target.value })}
+                        placeholder="Name"
+                        className="form-input"
+                        required
+                      />
+                    </label>
+                    <label className="field-label">
+                      <span>Entity type</span>
+                      <select
+                        value={entityForm.entity_type}
+                        onChange={(event) => setEntityForm({ ...entityForm, entity_type: event.target.value })}
+                        className="form-input"
+                      >
+                        {ENTITY_TYPES.map((type) => <option key={type}>{type}</option>)}
+                      </select>
+                    </label>
                   </div>
-                  <textarea
-                    aria-label="Entity description"
-                    value={entityForm.description}
-                    onChange={(event) => setEntityForm({ ...entityForm, description: event.target.value })}
-                    placeholder="Description"
-                    rows={9}
-                    className="form-input"
-                  />
+                  <label className="field-label">
+                    <span>Description</span>
+                    <textarea
+                      value={entityForm.description}
+                      onChange={(event) => setEntityForm({ ...entityForm, description: event.target.value })}
+                      placeholder="Description"
+                      rows={9}
+                      className="form-input"
+                    />
+                  </label>
                   <div className="template-grid">
                     {templateFields.map((field) => (
                       <label key={field}>
@@ -1700,70 +1777,90 @@ const WorldDetail = () => {
                   <h2>Relationships</h2>
                 </div>
                 <form onSubmit={handleRelationshipSubmit} className="relationship-form">
-                  <select
-                    aria-label="Relationship source entity"
-                    value={relationshipForm.source_entity_id}
-                    onChange={(event) => setRelationshipForm({ ...relationshipForm, source_entity_id: event.target.value })}
-                    className="form-input"
-                    required
-                  >
-                    <option value="">Source</option>
-                    {entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
-                  </select>
-                  <input
-                    aria-label="Relationship type"
-                    value={relationshipForm.relation_type}
-                    onChange={(event) => setRelationshipForm({ ...relationshipForm, relation_type: event.target.value })}
-                    placeholder="Relation"
-                    className="form-input"
-                    required
-                  />
-                  <select
-                    aria-label="Relationship target entity"
-                    value={relationshipForm.target_entity_id}
-                    onChange={(event) => setRelationshipForm({ ...relationshipForm, target_entity_id: event.target.value })}
-                    className="form-input"
-                    required
-                  >
-                    <option value="">Target</option>
-                    {entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
-                  </select>
-                  <input
-                    aria-label="Relationship notes"
-                    value={relationshipForm.notes}
-                    onChange={(event) => setRelationshipForm({ ...relationshipForm, notes: event.target.value })}
-                    placeholder="Notes"
-                    className="form-input"
-                  />
-                  <select
-                    aria-label="Relationship category"
-                    value={relationshipForm.category}
-                    onChange={(event) => setRelationshipForm({ ...relationshipForm, category: event.target.value })}
-                    className="form-input"
-                  >
-                    <option value="">Category</option>
-                    <option>Alliance</option>
-                    <option>Conflict</option>
-                    <option>Kinship</option>
-                    <option>Trade</option>
-                    <option>History</option>
-                  </select>
-                  <input
-                    aria-label="Relationship strength from 1 to 5"
-                    value={relationshipForm.strength}
-                    onChange={(event) => setRelationshipForm({ ...relationshipForm, strength: Number(event.target.value) })}
-                    className="form-input"
-                    min={1}
-                    max={5}
-                    type="number"
-                    title="Strength"
-                  />
+                  <label className="field-label">
+                    <span>Source</span>
+                    <select
+                      value={relationshipForm.source_entity_id}
+                      onChange={(event) => setRelationshipForm({ ...relationshipForm, source_entity_id: event.target.value })}
+                      className="form-input"
+                      required
+                    >
+                      <option value="">Source</option>
+                      {entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="field-label">
+                    <span>Relation type</span>
+                    <input
+                      value={relationshipForm.relation_type}
+                      onChange={(event) => setRelationshipForm({ ...relationshipForm, relation_type: event.target.value })}
+                      placeholder="Protects, rivals, funds"
+                      className="form-input"
+                      required
+                    />
+                  </label>
+                  <label className="field-label">
+                    <span>Target</span>
+                    <select
+                      value={relationshipForm.target_entity_id}
+                      onChange={(event) => setRelationshipForm({ ...relationshipForm, target_entity_id: event.target.value })}
+                      className="form-input"
+                      required
+                    >
+                      <option value="">Target</option>
+                      {entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="field-label">
+                    <span>Notes</span>
+                    <input
+                      value={relationshipForm.notes}
+                      onChange={(event) => setRelationshipForm({ ...relationshipForm, notes: event.target.value })}
+                      placeholder="Optional notes"
+                      className="form-input"
+                    />
+                  </label>
+                  <label className="field-label">
+                    <span>Category</span>
+                    <select
+                      value={relationshipForm.category}
+                      onChange={(event) => setRelationshipForm({ ...relationshipForm, category: event.target.value })}
+                      className="form-input"
+                    >
+                      <option value="">Category</option>
+                      <option>Alliance</option>
+                      <option>Conflict</option>
+                      <option>Kinship</option>
+                      <option>Trade</option>
+                      <option>History</option>
+                    </select>
+                  </label>
+                  <label className="field-label">
+                    <span>Strength</span>
+                    <input
+                      value={relationshipForm.strength}
+                      onChange={(event) => setRelationshipForm({ ...relationshipForm, strength: Number(event.target.value) })}
+                      className="form-input"
+                      min={1}
+                      max={5}
+                      type="number"
+                    />
+                  </label>
                   <button type="submit" className="btn btn-primary" disabled={busy || entities.length < 2}>
                     <Plus size={16} />
                     Add
                   </button>
                 </form>
                 <div className="relationship-list">
+                  <div className="context-row">
+                    <span>{selectedEntity ? `Showing relationships connected to ${selectedContextLabel}` : 'Showing all relationships'}</span>
+                    {selectedEntity && (
+                      <label className="checkbox-row">
+                        <input checked={showAllRelationships} onChange={(event) => setShowAllRelationships(event.target.checked)} type="checkbox" />
+                        <span>Show all</span>
+                      </label>
+                    )}
+                  </div>
                   {selectedRelationship && (
                     <p className="text-secondary">
                       Selected: {selectedRelationship.source_entity_name} {selectedRelationship.relation_type} {selectedRelationship.target_entity_name}
@@ -1771,8 +1868,10 @@ const WorldDetail = () => {
                   )}
                   {relationships.length === 0 ? (
                     <p className="text-muted">No relationships yet.</p>
+                  ) : visibleRelationships.length === 0 ? (
+                    <p className="text-muted">No relationships are connected to {selectedContextLabel}.</p>
                   ) : (
-                    relationships.map((relationship) => (
+                    visibleRelationships.map((relationship) => (
                       <article
                         className={[
                           'relationship-item',
@@ -1830,87 +1929,117 @@ const WorldDetail = () => {
                 </div>
               </section>
 
-              <section className="glass content-section">
+            </>
+          ) : activeView === 'timeline' ? (
+            <>
+              <section className="glass content-section" id="timeline-panel" role="tabpanel" aria-labelledby="timeline-tab">
                 <div className="section-header">
                   <Clock className="text-primary" />
                   <h2>Timeline</h2>
                 </div>
                 <form onSubmit={handleTimelineSubmit} className="timeline-form">
-                  <input
-                    aria-label="Timeline event title"
-                    value={timelineForm.title}
-                    onChange={(event) => setTimelineForm({ ...timelineForm, title: event.target.value })}
-                    placeholder="Event title"
-                    className="form-input"
-                  />
-                  <input
-                    aria-label="Timeline event order"
-                    value={timelineForm.event_order}
-                    onChange={(event) => setTimelineForm({ ...timelineForm, event_order: Number(event.target.value) })}
-                    type="number"
-                    className="form-input"
-                    min={1}
-                  />
-                  <textarea
-                    aria-label="Timeline event description"
-                    value={timelineForm.description}
-                    onChange={(event) => setTimelineForm({ ...timelineForm, description: event.target.value })}
-                    placeholder="Event description"
-                    rows={3}
-                    className="form-input"
-                  />
+                  <label className="field-label">
+                    <span>Event title</span>
+                    <input
+                      value={timelineForm.title}
+                      onChange={(event) => setTimelineForm({ ...timelineForm, title: event.target.value })}
+                      placeholder="Event title"
+                      className="form-input"
+                    />
+                  </label>
+                  <label className="field-label">
+                    <span>Order</span>
+                    <input
+                      value={timelineForm.event_order}
+                      onChange={(event) => setTimelineForm({ ...timelineForm, event_order: Number(event.target.value) })}
+                      type="number"
+                      className="form-input"
+                      min={1}
+                    />
+                  </label>
+                  <label className="field-label full-width">
+                    <span>Description</span>
+                    <textarea
+                      value={timelineForm.description}
+                      onChange={(event) => setTimelineForm({ ...timelineForm, description: event.target.value })}
+                      placeholder="Event description"
+                      rows={3}
+                      className="form-input"
+                    />
+                  </label>
                   <div className="form-row compact">
-                    <input
-                      aria-label="Timeline event causes"
-                      value={timelineForm.causes}
-                      onChange={(event) => setTimelineForm({ ...timelineForm, causes: event.target.value })}
-                      placeholder="Causes"
-                      className="form-input"
-                    />
-                    <input
-                      aria-label="Timeline event consequences"
-                      value={timelineForm.consequences}
-                      onChange={(event) => setTimelineForm({ ...timelineForm, consequences: event.target.value })}
-                      placeholder="Consequences"
-                      className="form-input"
-                    />
+                    <label className="field-label">
+                      <span>Causes</span>
+                      <input
+                        value={timelineForm.causes}
+                        onChange={(event) => setTimelineForm({ ...timelineForm, causes: event.target.value })}
+                        placeholder="Causes"
+                        className="form-input"
+                      />
+                    </label>
+                    <label className="field-label">
+                      <span>Consequences</span>
+                      <input
+                        value={timelineForm.consequences}
+                        onChange={(event) => setTimelineForm({ ...timelineForm, consequences: event.target.value })}
+                        placeholder="Consequences"
+                        className="form-input"
+                      />
+                    </label>
                   </div>
                   <div className="form-row compact">
-                    <input
-                      aria-label="Timeline event era"
-                      value={timelineForm.era_label}
-                      onChange={(event) => setTimelineForm({ ...timelineForm, era_label: event.target.value })}
-                      placeholder="Era"
-                      className="form-input"
-                    />
-                    <input
-                      aria-label="Timeline event date label"
-                      value={timelineForm.date_label}
-                      onChange={(event) => setTimelineForm({ ...timelineForm, date_label: event.target.value })}
-                      placeholder="Date label"
-                      className="form-input"
-                    />
+                    <label className="field-label">
+                      <span>Era</span>
+                      <input
+                        value={timelineForm.era_label}
+                        onChange={(event) => setTimelineForm({ ...timelineForm, era_label: event.target.value })}
+                        placeholder="Era"
+                        className="form-input"
+                      />
+                    </label>
+                    <label className="field-label">
+                      <span>Date label</span>
+                      <input
+                        value={timelineForm.date_label}
+                        onChange={(event) => setTimelineForm({ ...timelineForm, date_label: event.target.value })}
+                        placeholder="Date label"
+                        className="form-input"
+                      />
+                    </label>
                   </div>
-                  <select
-                    aria-label="Timeline dependency"
-                    value={timelineForm.depends_on}
-                    onChange={(event) => setTimelineForm({ ...timelineForm, depends_on: event.target.value })}
-                    className="form-input"
-                  >
-                    <option value="">No dependency</option>
-                    {timelineEvents.map((event) => (
-                      <option key={event.id} value={event.id}>{event.event_order}. {event.title}</option>
-                    ))}
-                  </select>
+                  <label className="field-label full-width">
+                    <span>Dependency</span>
+                    <select
+                      value={timelineForm.depends_on}
+                      onChange={(event) => setTimelineForm({ ...timelineForm, depends_on: event.target.value })}
+                      className="form-input"
+                    >
+                      <option value="">No dependency</option>
+                      {timelineEvents.map((event) => (
+                        <option key={event.id} value={event.id}>{event.event_order}. {event.title}</option>
+                      ))}
+                    </select>
+                  </label>
                   <button className="btn btn-primary" type="submit" disabled={busy}>
                     <Plus size={16} />
                     Add Event
                   </button>
                 </form>
+                <div className="context-row">
+                  <span>{selectedEntity ? `Showing events linked to ${selectedContextLabel}` : 'Showing all events'}</span>
+                  {selectedEntity && (
+                    <label className="checkbox-row">
+                      <input checked={showAllTimeline} onChange={(event) => setShowAllTimeline(event.target.checked)} type="checkbox" />
+                      <span>Show all</span>
+                    </label>
+                  )}
+                </div>
                 <div className="timeline-track">
                   {timelineEvents.length === 0 ? (
                     <p className="text-muted">No timeline events yet.</p>
-                  ) : timelineEvents.map((event) => (
+                  ) : visibleTimelineEvents.length === 0 ? (
+                    <p className="text-muted">No timeline events are linked to {selectedContextLabel}.</p>
+                  ) : visibleTimelineEvents.map((event) => (
                     <article className="timeline-item" key={event.id}>
                       <span>{event.event_order}</span>
                       <div>
@@ -1930,33 +2059,39 @@ const WorldDetail = () => {
                   ))}
                 </div>
               </section>
-
-              <section className="glass content-section">
+            </>
+          ) : activeView === 'planning' ? (
+            <>
+              <section className="glass content-section" id="planning-panel" role="tabpanel" aria-labelledby="planning-tab">
                 <div className="section-header">
                   <ClipboardCheck className="text-primary" />
                   <h2>Planning Board</h2>
                 </div>
                 {planningBoards.length === 0 ? (
                   <form className="planning-form" onSubmit={handleCreatePlanningBoard}>
-                    <input
-                      aria-label="Planning board name"
-                      value={planningForm.boardName}
-                      onChange={(event) => setPlanningForm({ ...planningForm, boardName: event.target.value })}
-                      placeholder="Board name"
-                      className="form-input"
-                    />
-                    <select
-                      aria-label="Planning board type"
-                      value={planningForm.boardType}
-                      onChange={(event) => setPlanningForm({ ...planningForm, boardType: event.target.value as PlanningBoard['board_type'] })}
-                      className="form-input"
-                    >
-                      <option value="plot_thread">Plot thread</option>
-                      <option value="arc">Arc</option>
-                      <option value="chapter">Chapter</option>
-                      <option value="scene">Scene</option>
-                      <option value="custom">Custom</option>
-                    </select>
+                    <label className="field-label">
+                      <span>Board name</span>
+                      <input
+                        value={planningForm.boardName}
+                        onChange={(event) => setPlanningForm({ ...planningForm, boardName: event.target.value })}
+                        placeholder="Board name"
+                        className="form-input"
+                      />
+                    </label>
+                    <label className="field-label">
+                      <span>Board type</span>
+                      <select
+                        value={planningForm.boardType}
+                        onChange={(event) => setPlanningForm({ ...planningForm, boardType: event.target.value as PlanningBoard['board_type'] })}
+                        className="form-input"
+                      >
+                        <option value="plot_thread">Plot thread</option>
+                        <option value="arc">Arc</option>
+                        <option value="chapter">Chapter</option>
+                        <option value="scene">Scene</option>
+                        <option value="custom">Custom</option>
+                      </select>
+                    </label>
                     <button className="btn btn-primary" type="submit" disabled={busy}>
                       <Plus size={16} />
                       Create Board
@@ -1965,20 +2100,24 @@ const WorldDetail = () => {
                 ) : (
                   <>
                     <form className="planning-form" onSubmit={handleCreatePlanningCard}>
-                      <input
-                        aria-label="Planning card title"
-                        value={planningForm.cardTitle}
-                        onChange={(event) => setPlanningForm({ ...planningForm, cardTitle: event.target.value })}
-                        placeholder="Scene or thread card"
-                        className="form-input"
-                      />
-                      <input
-                        aria-label="Planning card lane"
-                        value={planningForm.cardLane}
-                        onChange={(event) => setPlanningForm({ ...planningForm, cardLane: event.target.value })}
-                        placeholder="Lane"
-                        className="form-input"
-                      />
+                      <label className="field-label">
+                        <span>Card title</span>
+                        <input
+                          value={planningForm.cardTitle}
+                          onChange={(event) => setPlanningForm({ ...planningForm, cardTitle: event.target.value })}
+                          placeholder="Scene or thread card"
+                          className="form-input"
+                        />
+                      </label>
+                      <label className="field-label">
+                        <span>Lane</span>
+                        <input
+                          value={planningForm.cardLane}
+                          onChange={(event) => setPlanningForm({ ...planningForm, cardLane: event.target.value })}
+                          placeholder="Lane"
+                          className="form-input"
+                        />
+                      </label>
                       <button className="btn btn-primary" type="submit" disabled={busy}>
                         <Plus size={16} />
                         Link Card
@@ -2022,34 +2161,39 @@ const WorldDetail = () => {
                   <h2>Campaign Sessions</h2>
                 </div>
                 <form className="planning-form" onSubmit={handleCreateCampaignSession}>
-                  <input
-                    className="form-input"
-                    aria-label="Session number"
-                    min={1}
-                    type="number"
-                    value={campaignForm.sessionNumber}
-                    onChange={(event) => setCampaignForm({ ...campaignForm, sessionNumber: Number(event.target.value) })}
-                    title="Session number"
-                  />
-                  <input
-                    className="form-input"
-                    aria-label="Session title"
-                    value={campaignForm.sessionTitle}
-                    onChange={(event) => setCampaignForm({ ...campaignForm, sessionTitle: event.target.value })}
-                    placeholder="Session title"
-                  />
+                  <label className="field-label">
+                    <span>Session number</span>
+                    <input
+                      className="form-input"
+                      min={1}
+                      type="number"
+                      value={campaignForm.sessionNumber}
+                      onChange={(event) => setCampaignForm({ ...campaignForm, sessionNumber: Number(event.target.value) })}
+                    />
+                  </label>
+                  <label className="field-label">
+                    <span>Session title</span>
+                    <input
+                      className="form-input"
+                      value={campaignForm.sessionTitle}
+                      onChange={(event) => setCampaignForm({ ...campaignForm, sessionTitle: event.target.value })}
+                      placeholder="Session title"
+                    />
+                  </label>
                   <button className="btn btn-primary" type="submit" disabled={busy}>
                     <Plus size={16} />
                     Add Session
                   </button>
-                  <textarea
-                    className="form-input full-width"
-                    aria-label="Session recap and consequences"
-                    value={campaignForm.recap}
-                    onChange={(event) => setCampaignForm({ ...campaignForm, recap: event.target.value })}
-                    placeholder="Recap and consequences"
-                    rows={3}
-                  />
+                  <label className="field-label full-width">
+                    <span>Recap and consequences</span>
+                    <textarea
+                      className="form-input"
+                      value={campaignForm.recap}
+                      onChange={(event) => setCampaignForm({ ...campaignForm, recap: event.target.value })}
+                      placeholder="Recap and consequences"
+                      rows={3}
+                    />
+                  </label>
                 </form>
                 <div className="planning-board-strip">
                   {campaignSessions.length === 0 ? (
@@ -2073,36 +2217,42 @@ const WorldDetail = () => {
                   <h2>Lore Notes</h2>
                 </div>
                 <form className="planning-form" onSubmit={handleCreateLoreNote}>
-                  <input
-                    className="form-input"
-                    aria-label="Lore note title"
-                    value={campaignForm.noteTitle}
-                    onChange={(event) => setCampaignForm({ ...campaignForm, noteTitle: event.target.value })}
-                    placeholder={selectedEntity ? `Note for ${selectedEntity.name}` : 'World note'}
-                  />
-                  <select
-                    className="form-input"
-                    aria-label="Lore note visibility"
-                    value={campaignForm.noteVisibility}
-                    onChange={(event) => setCampaignForm({ ...campaignForm, noteVisibility: event.target.value as LoreNote['visibility'] })}
-                  >
-                    <option value="dm_only">DM only</option>
-                    <option value="player_visible">Player visible</option>
-                    <option value="discovered">Discovered</option>
-                    <option value="redacted">Redacted</option>
-                  </select>
+                  <label className="field-label">
+                    <span>Note title</span>
+                    <input
+                      className="form-input"
+                      value={campaignForm.noteTitle}
+                      onChange={(event) => setCampaignForm({ ...campaignForm, noteTitle: event.target.value })}
+                      placeholder={selectedEntity ? `Note for ${selectedEntity.name}` : 'World note'}
+                    />
+                  </label>
+                  <label className="field-label">
+                    <span>Visibility</span>
+                    <select
+                      className="form-input"
+                      value={campaignForm.noteVisibility}
+                      onChange={(event) => setCampaignForm({ ...campaignForm, noteVisibility: event.target.value as LoreNote['visibility'] })}
+                    >
+                      <option value="dm_only">DM only</option>
+                      <option value="player_visible">Player visible</option>
+                      <option value="discovered">Discovered</option>
+                      <option value="redacted">Redacted</option>
+                    </select>
+                  </label>
                   <button className="btn btn-primary" type="submit" disabled={busy}>
                     <Plus size={16} />
                     Add Note
                   </button>
-                  <textarea
-                    className="form-input full-width"
-                    aria-label="Lore note body"
-                    value={campaignForm.noteBody}
-                    onChange={(event) => setCampaignForm({ ...campaignForm, noteBody: event.target.value })}
-                    placeholder="Secret, rumor, reveal condition, or handout text"
-                    rows={3}
-                  />
+                  <label className="field-label full-width">
+                    <span>Note body</span>
+                    <textarea
+                      className="form-input"
+                      value={campaignForm.noteBody}
+                      onChange={(event) => setCampaignForm({ ...campaignForm, noteBody: event.target.value })}
+                      placeholder="Secret, rumor, reveal condition, or handout text"
+                      rows={3}
+                    />
+                  </label>
                 </form>
                 <div className="suggestion-list">
                   {loreNotes.slice(0, 8).map((note) => (
@@ -2123,44 +2273,50 @@ const WorldDetail = () => {
                   <h2>Faction Clocks</h2>
                 </div>
                 <form className="planning-form" onSubmit={handleCreateFactionClock}>
-                  <input
-                    className="form-input"
-                    aria-label="Faction clock title"
-                    value={campaignForm.clockTitle}
-                    onChange={(event) => setCampaignForm({ ...campaignForm, clockTitle: event.target.value })}
-                    placeholder="Clock title"
-                  />
-                  <input
-                    className="form-input"
-                    aria-label="Faction clock segments"
-                    min={1}
-                    max={20}
-                    type="number"
-                    value={campaignForm.clockSegments}
-                    onChange={(event) => setCampaignForm({ ...campaignForm, clockSegments: Number(event.target.value) })}
-                    title="Segments"
-                  />
-                  <input
-                    className="form-input"
-                    aria-label="Faction clock filled segments"
-                    min={0}
-                    max={campaignForm.clockSegments}
-                    type="number"
-                    value={campaignForm.clockFilled}
-                    onChange={(event) => setCampaignForm({ ...campaignForm, clockFilled: Number(event.target.value) })}
-                    title="Filled segments"
-                  />
+                  <label className="field-label">
+                    <span>Clock title</span>
+                    <input
+                      className="form-input"
+                      value={campaignForm.clockTitle}
+                      onChange={(event) => setCampaignForm({ ...campaignForm, clockTitle: event.target.value })}
+                      placeholder="Clock title"
+                    />
+                  </label>
+                  <label className="field-label">
+                    <span>Segments</span>
+                    <input
+                      className="form-input"
+                      min={1}
+                      max={20}
+                      type="number"
+                      value={campaignForm.clockSegments}
+                      onChange={(event) => setCampaignForm({ ...campaignForm, clockSegments: Number(event.target.value) })}
+                    />
+                  </label>
+                  <label className="field-label">
+                    <span>Filled</span>
+                    <input
+                      className="form-input"
+                      min={0}
+                      max={campaignForm.clockSegments}
+                      type="number"
+                      value={campaignForm.clockFilled}
+                      onChange={(event) => setCampaignForm({ ...campaignForm, clockFilled: Number(event.target.value) })}
+                    />
+                  </label>
                   <button className="btn btn-primary" type="submit" disabled={busy}>
                     <Plus size={16} />
                     Add Clock
                   </button>
-                  <input
-                    className="form-input full-width"
-                    aria-label="Faction clock stakes"
-                    value={campaignForm.clockStakes}
-                    onChange={(event) => setCampaignForm({ ...campaignForm, clockStakes: event.target.value })}
-                    placeholder="Stakes if the clock fills"
-                  />
+                  <label className="field-label full-width">
+                    <span>Stakes</span>
+                    <input
+                      className="form-input"
+                      value={campaignForm.clockStakes}
+                      onChange={(event) => setCampaignForm({ ...campaignForm, clockStakes: event.target.value })}
+                      placeholder="Stakes if the clock fills"
+                    />
+                  </label>
                 </form>
                 <div className="planning-board-strip">
                   {factionClocks.map((clock) => (
@@ -2217,13 +2373,15 @@ const WorldDetail = () => {
                 </div>
               </div>
               <div className="saved-views-row">
-                <input
-                  aria-label="Graph view name"
-                  value={graphViewName}
-                  onChange={(event) => setGraphViewName(event.target.value)}
-                  placeholder="Named view"
-                  className="form-input"
-                />
+                <label className="field-label saved-view-label">
+                  <span>View name</span>
+                  <input
+                    value={graphViewName}
+                    onChange={(event) => setGraphViewName(event.target.value)}
+                    placeholder="Named view"
+                    className="form-input"
+                  />
+                </label>
                 <button className="btn btn-secondary compact-button" type="button" onClick={handleSaveGraphView} disabled={busy || !graphViewName.trim()}>
                   <Save size={16} />
                   Save View
@@ -2234,6 +2392,12 @@ const WorldDetail = () => {
                   </button>
                 ))}
               </div>
+              <div className="graph-legend" aria-label="Relationship color legend">
+                <span><i className="legend-swatch alliance" />Alliance</span>
+                <span><i className="legend-swatch conflict" />Conflict</span>
+                <span><i className="legend-swatch neutral" />Neutral</span>
+                <span><i className="legend-swatch selected" />Selected</span>
+              </div>
               <div className="graph-canvas">
                 <WorldGraphView
                   nodes={graphData.nodes}
@@ -2241,6 +2405,7 @@ const WorldDetail = () => {
                   onSelectEntity={selectEntity}
                   onSelectRelationship={setSelectedRelationshipId}
                   onPositionsChange={setGraphPositions}
+                  onCreateEntity={handleCreateEntityFromGraph}
                   resetKey={graphResetKey}
                 />
               </div>
@@ -2321,15 +2486,20 @@ const WorldDetail = () => {
               ))}
             </div>
             <form onSubmit={handleAgenticGen} className="agent-form">
-              <textarea
-                aria-label="Generation prompt"
-                value={agenticInstruction}
-                onChange={(event) => setAgenticInstruction(event.target.value)}
-                placeholder="Generation prompt"
-                rows={5}
-                className="form-input"
-                required
-              />
+              <label className="field-label">
+                <span>Generation prompt</span>
+                <textarea
+                  value={agenticInstruction}
+                  onChange={(event) => {
+                    setAgenticInstruction(event.target.value);
+                    setConfirmReplaceGenerated(false);
+                  }}
+                  placeholder="Generation prompt"
+                  rows={5}
+                  className="form-input"
+                  required
+                />
+              </label>
               <label className="checkbox-row">
                 <input
                   checked={saveGenerated}
@@ -2340,21 +2510,25 @@ const WorldDetail = () => {
               </label>
               {saveGenerated && (
                 <div className="form-row compact">
-                  <input
-                    aria-label="Generated entity name"
-                    value={generatedName}
-                    onChange={(event) => setGeneratedName(event.target.value)}
-                    placeholder="Entity name"
-                    className="form-input"
-                  />
-                  <select
-                    aria-label="Generated entity type"
-                    value={generatedType}
-                    onChange={(event) => setGeneratedType(event.target.value)}
-                    className="form-input"
-                  >
-                    {ENTITY_TYPES.map((type) => <option key={type}>{type}</option>)}
-                  </select>
+                  <label className="field-label">
+                    <span>Entity name</span>
+                    <input
+                      value={generatedName}
+                      onChange={(event) => setGeneratedName(event.target.value)}
+                      placeholder="Entity name"
+                      className="form-input"
+                    />
+                  </label>
+                  <label className="field-label">
+                    <span>Entity type</span>
+                    <select
+                      value={generatedType}
+                      onChange={(event) => setGeneratedType(event.target.value)}
+                      className="form-input"
+                    >
+                      {ENTITY_TYPES.map((type) => <option key={type}>{type}</option>)}
+                    </select>
+                  </label>
                 </div>
               )}
               <button type="submit" className="btn btn-primary" disabled={generating || !agenticInstruction.trim()}>
@@ -2374,21 +2548,25 @@ const WorldDetail = () => {
               <pre className="lore-content">{agenticResult.content}</pre>
               {!saveGenerated && (
                 <div className="form-row compact">
-                  <input
-                    aria-label="Generated entity name"
-                    value={generatedName}
-                    onChange={(event) => setGeneratedName(event.target.value)}
-                    placeholder="Entity name"
-                    className="form-input"
-                  />
-                  <select
-                    aria-label="Generated entity type"
-                    value={generatedType}
-                    onChange={(event) => setGeneratedType(event.target.value)}
-                    className="form-input"
-                  >
-                    {ENTITY_TYPES.map((type) => <option key={type}>{type}</option>)}
-                  </select>
+                  <label className="field-label">
+                    <span>New entity name</span>
+                    <input
+                      value={generatedName}
+                      onChange={(event) => setGeneratedName(event.target.value)}
+                      placeholder="Entity name"
+                      className="form-input"
+                    />
+                  </label>
+                  <label className="field-label">
+                    <span>New entity type</span>
+                    <select
+                      value={generatedType}
+                      onChange={(event) => setGeneratedType(event.target.value)}
+                      className="form-input"
+                    >
+                      {ENTITY_TYPES.map((type) => <option key={type}>{type}</option>)}
+                    </select>
+                  </label>
                 </div>
               )}
               <div className="form-actions">
@@ -2406,7 +2584,7 @@ const WorldDetail = () => {
                   onClick={() => handleApplyGenerated('replace')}
                   disabled={!selectedEntity || busy}
                 >
-                  Replace
+                  {confirmReplaceGenerated ? 'Confirm Replace' : 'Replace'}
                 </button>
                 <button
                   type="button"
@@ -2426,14 +2604,16 @@ const WorldDetail = () => {
               <h3>Passage Check</h3>
             </div>
             <form onSubmit={handlePassageCheck} className="agent-form">
-              <textarea
-                aria-label="Passage text to check"
-                value={passageText}
-                onChange={(event) => setPassageText(event.target.value)}
-                placeholder="Paste a scene excerpt"
-                rows={5}
-                className="form-input"
-              />
+              <label className="field-label">
+                <span>Passage text</span>
+                <textarea
+                  value={passageText}
+                  onChange={(event) => setPassageText(event.target.value)}
+                  placeholder="Paste a scene excerpt"
+                  rows={5}
+                  className="form-input"
+                />
+              </label>
               <button type="submit" className="btn btn-secondary" disabled={busy || !passageText.trim()}>
                 <ClipboardCheck size={16} />
                 Check

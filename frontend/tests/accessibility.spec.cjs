@@ -53,6 +53,24 @@ const relationships = [
   },
 ];
 
+const suggestions = [
+  {
+    id: 'suggestion-1',
+    world_id: world.id,
+    instruction: 'Generated test lore',
+    content: 'Generated replacement lore for Mara.',
+    suggested_name: 'Bell Cipher',
+    suggested_type: 'Concept',
+    status: 'pending',
+    created_at: createdAt,
+    candidate_kind: 'entity',
+    source_type: 'generation',
+    source_id: null,
+    source_excerpt: null,
+    payload: null,
+  },
+];
+
 const timelineEvents = [
   {
     id: 'timeline-1',
@@ -80,13 +98,16 @@ async function mockApi(page) {
     if (path === `/worlds/${world.id}/entities`) return route.fulfill({ json: { entities } });
     if (path === `/worlds/${world.id}/relationships`) return route.fulfill({ json: { relationships } });
     if (path === `/worlds/${world.id}/timeline`) return route.fulfill({ json: { events: timelineEvents } });
-    if (path === `/worlds/${world.id}/suggestions`) return route.fulfill({ json: { suggestions: [] } });
+    if (path === `/worlds/${world.id}/suggestions`) return route.fulfill({ json: { suggestions } });
     if (path === `/worlds/${world.id}/graph-views`) return route.fulfill({ json: { views: [] } });
     if (path === `/worlds/${world.id}/planning-boards`) return route.fulfill({ json: { boards: [] } });
     if (path === `/worlds/${world.id}/campaign-sessions`) return route.fulfill({ json: { sessions: [] } });
     if (path === `/worlds/${world.id}/lore-notes`) return route.fulfill({ json: { notes: [] } });
     if (path === `/worlds/${world.id}/faction-clocks`) return route.fulfill({ json: { clocks: [] } });
+    if (path === `/worlds/${world.id}/drafts`) return route.fulfill({ json: { drafts: [] } });
     if (path === '/health') return route.fulfill({ json: { status: 'ok', llm: { mode: 'stub', enabled: false } } });
+    if (path === `/worlds/${world.id}/agentic-generate`) return route.fulfill({ json: { content: 'Generated replacement lore for Mara.' } });
+    if (path === `/worlds/${world.id}/entities/entity-1`) return route.fulfill({ json: { ...entities[0], description: 'Generated replacement lore for Mara.' } });
 
     return route.fulfill({ status: 404, json: { detail: 'Not found in accessibility test mock' } });
   });
@@ -100,6 +121,21 @@ async function checkA11y(page) {
 
 test.beforeEach(async ({ page }) => {
   await mockApi(page);
+});
+
+test('dashboard home route exposes recent worlds and quick links', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Continue building your canon' })).toBeVisible();
+  await expect(page.getByRole('link', { name: /Ember Archipelago/ })).toBeVisible();
+  await expect(page.getByRole('link', { name: /World Management/ })).toBeVisible();
+});
+
+test('worlds search and tone filter empty state are usable', async ({ page }) => {
+  await page.goto('/worlds');
+  await page.getByRole('searchbox', { name: 'Search worlds' }).fill('no matching world');
+  await expect(page.getByText('No worlds match these filters')).toBeVisible();
+  await page.getByRole('button', { name: 'Clear Filters' }).click();
+  await expect(page.getByRole('heading', { name: world.title })).toBeVisible();
 });
 
 test('core routes have no automated axe violations', async ({ page }) => {
@@ -121,6 +157,35 @@ test('keyboard users can reach skip link, tabs, and graph summary selection', as
   await page.getByRole('tab', { name: /Graph/ }).click();
   await expect(page.getByRole('heading', { name: 'Accessible graph summary' })).toBeVisible();
   await page.getByRole('button', { name: 'Glass Harbor', exact: true }).click();
-  await page.getByRole('tab', { name: /Editor/ }).click();
+  await page.getByRole('tab', { name: /Canon/ }).click();
   await expect(page.getByRole('textbox', { name: 'Entity name' })).toHaveValue('Glass Harbor');
+});
+
+test('workspace modes support keyboard navigation and selected context filters', async ({ page }) => {
+  await page.goto(`/worlds/${world.id}`);
+  for (const tab of ['Canon', 'Drafts', 'Timeline', 'Planning', 'Graph', 'Campaign']) {
+    await page.getByRole('tab', { name: tab }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('tab', { name: tab })).toHaveAttribute('aria-selected', 'true');
+  }
+  await page.getByRole('tab', { name: 'Canon' }).click();
+  await expect(page.getByText('Showing relationships connected to Mara Vey')).toBeVisible();
+  await page.getByRole('checkbox', { name: 'Show all' }).check();
+  await expect(page.getByText('Mara Vey protects Glass Harbor')).toBeVisible();
+});
+
+test('generated lore replace requires explicit confirmation', async ({ page }) => {
+  await page.goto(`/worlds/${world.id}`);
+  await page.getByRole('textbox', { name: 'Generation prompt' }).fill('Replace Mara description');
+  await page.getByRole('button', { name: 'Generate' }).click();
+  await expect(page.getByLabel('Generation and review tools').getByText('Generated replacement lore for Mara.')).toBeVisible();
+  await page.getByRole('button', { name: 'Replace' }).click();
+  await expect(page.getByRole('button', { name: 'Confirm Replace' })).toBeVisible();
+});
+
+test('mobile workspace has no horizontal overflow', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.goto(`/worlds/${world.id}`);
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  expect(overflow).toBe(false);
 });

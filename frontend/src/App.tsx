@@ -1,11 +1,11 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { Globe } from 'lucide-react';
 import './App.css';
 
-// Pages
-import Home from './pages/Home';
-import Worlds from './pages/Worlds';
-import WorldWiki from './pages/WorldWiki';
+const Home = lazy(() => import('./pages/Home'));
+const Worlds = lazy(() => import('./pages/Worlds'));
+const WorldWiki = lazy(() => import('./pages/WorldWiki'));
 
 function Navigation() {
   const location = useLocation();
@@ -33,11 +33,13 @@ function App() {
         <a className="skip-link" href="#main-content">Skip to main content</a>
         <Navigation />
         <main id="main-content" className="main-content" tabIndex={-1}>
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/worlds/*" element={<Worlds />} />
-            <Route path="/wiki/:worldId" element={<WorldWiki />} />
-          </Routes>
+          <Suspense fallback={<div className="loading-state" role="status">Loading workspace...</div>}>
+            <Routes>
+              <Route path="/" element={<Home />} />
+              <Route path="/worlds/*" element={<Worlds />} />
+              <Route path="/wiki/:worldId" element={<WorldWiki />} />
+            </Routes>
+          </Suspense>
         </main>
       </div>
     </Router>

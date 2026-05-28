@@ -56,24 +56,24 @@
 .worlds-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 1.5rem;
+  gap: 1rem;
 }
 
 .world-card {
   display: flex;
   flex-direction: column;
-  border-radius: var(--radius-lg);
-  padding: 1.5rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 1.25rem;
   gap: 1rem;
   transition: all var(--transition-normal);
-  cursor: pointer;
   height: 100%;
+  background: rgba(19, 19, 28, 0.72);
 }
 
 .world-card:hover {
-  transform: translateY(-4px);
-  border-color: rgba(124, 58, 237, 0.4);
-  box-shadow: 0 8px 24px -10px rgba(124, 58, 237, 0.2);
+  border-color: rgba(96, 165, 250, 0.4);
+  box-shadow: 0 8px 24px -14px rgba(59, 130, 246, 0.35);
 }
 
 .world-card-header {
@@ -156,15 +156,63 @@
 .world-card-footer {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.9rem;
+  flex-wrap: wrap;
   color: var(--text-muted);
   font-size: 0.85rem;
   padding-top: 1rem;
   border-top: 1px solid var(--border-color);
 }
 
-.world-card-actions {
+.worlds-toolbar {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: rgba(19, 19, 28, 0.64);
+}
+
+.world-search,
+.world-filter {
+  min-height: 2.45rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.16);
+  color: var(--text-muted);
+}
+
+.world-search {
+  flex: 1;
+  padding: 0 0.75rem;
+}
+
+.world-search input,
+.world-filter select {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.world-search input {
+  width: 100%;
+}
+
+.world-filter {
+  padding: 0 0.45rem 0 0.75rem;
+}
+
+.world-filter span {
+  color: var(--text-secondary);
+  font-size: 0.88rem;
 }
 
 .world-card-action {
@@ -178,4 +226,42 @@
 
 .world-card-action:hover {
   color: var(--text-primary);
+}
+
+.text-danger-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+  padding: 0;
+  background: transparent;
+  color: #fca5a5;
+  font: inherit;
+}
+
+.text-danger-button:hover {
+  color: #fecaca;
+}
+
+.compact-empty {
+  padding: 2.5rem;
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-md);
+  background: rgba(19, 19, 28, 0.58);
+}
+
+@media (max-width: 700px) {
+  .worlds-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .world-card-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .text-danger-button {
+    margin-left: 0;
+  }
 }

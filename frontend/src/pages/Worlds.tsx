@@ -1,16 +1,20 @@
+import { lazy, Suspense } from 'react';
 import { Routes, Route } from 'react-router-dom';
-import WorldsList from './WorldsList';
-import WorldDetail from './WorldDetail';
-import CreateWorld from './CreateWorld';
+
+const WorldsList = lazy(() => import('./WorldsList'));
+const WorldDetail = lazy(() => import('./WorldDetail'));
+const CreateWorld = lazy(() => import('./CreateWorld'));
 
 const Worlds = () => {
   return (
     <div className="worlds-container page-enter">
-      <Routes>
-        <Route path="/" element={<WorldsList />} />
-        <Route path="/new" element={<CreateWorld />} />
-        <Route path="/:id" element={<WorldDetail />} />
-      </Routes>
+      <Suspense fallback={<div className="loading-state" role="status">Loading worlds...</div>}>
+        <Routes>
+          <Route path="/" element={<WorldsList />} />
+          <Route path="/new" element={<CreateWorld />} />
+          <Route path="/:id" element={<WorldDetail />} />
+        </Routes>
+      </Suspense>
     </div>
   );
 };
