@@ -292,7 +292,7 @@
 
 .draft-workspace {
   display: grid;
-  grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
+  grid-template-columns: minmax(190px, 260px) minmax(0, 1fr);
   gap: 1rem;
 }
 
@@ -315,18 +315,118 @@
   text-align: left;
 }
 
+.draft-list-item strong {
+  line-height: 1.25;
+}
+
 .draft-list-item.active {
   border-color: rgba(96, 165, 250, 0.7);
   background: rgba(59, 130, 246, 0.12);
 }
 
-.draft-list-item small {
+.draft-list-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.draft-list-item small,
+.draft-check-summary span,
+.draft-history-item span {
   color: var(--text-muted);
 }
 
 .draft-editor {
   display: grid;
   gap: 0.75rem;
+}
+
+.draft-link-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.draft-link-grid select {
+  min-height: 7rem;
+}
+
+.draft-context-panel,
+.excerpt-preview,
+.draft-review,
+.draft-history {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.draft-context-panel,
+.excerpt-preview {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 0.8rem;
+}
+
+.canon-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.canon-chip {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  background: rgba(59, 130, 246, 0.1);
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0.25rem 0.6rem;
+}
+
+.canon-chip:hover {
+  color: var(--text-primary);
+  border-color: rgba(96, 165, 250, 0.6);
+}
+
+.excerpt-preview span {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.excerpt-preview p,
+.excerpt-inline {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.draft-check-summary,
+.draft-history-item {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 0.7rem 0.8rem;
+}
+
+.draft-check-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.draft-history {
+  padding-top: 0.25rem;
+}
+
+.draft-history-item {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0.25rem 0.75rem;
+}
+
+.draft-history-item p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-secondary);
 }
 
 .compact-lore {
@@ -1118,6 +1218,13 @@
 
   .suggestion-item,
   .relationship-item {
+    grid-template-columns: 1fr;
+  }
+
+  .draft-workspace,
+  .draft-link-grid,
+  .draft-check-summary,
+  .draft-history-item {
     grid-template-columns: 1fr;
   }
 

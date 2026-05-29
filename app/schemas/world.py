@@ -35,13 +35,13 @@ class GenerateRequest(BaseModel):
 class GenerateResponse(BaseModel):
     world_id: UUID
     section: Literal["glossary", "timeline_hint"]
-    content: str
+    content: str = Field(..., max_length=20000)
 
 
 class EntityCreate(BaseModel):
     name: str = Field(..., max_length=200)
     entity_type: str = Field(..., max_length=100)
-    description: str
+    description: str = Field(..., max_length=20000)
     structured_fields: dict[str, str] = Field(default_factory=dict)
 
 
@@ -56,7 +56,7 @@ class EntityRead(EntityCreate):
 class EntityUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=200)
     entity_type: str | None = Field(default=None, max_length=100)
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=20000)
     structured_fields: dict[str, str] | None = None
 
 
@@ -157,7 +157,9 @@ class ConsistencyIssueStateListResponse(BaseModel):
 
 class AgenticGenerateRequest(BaseModel):
     instruction: str = Field(
-        ..., description="Instruction for the LLM, e.g. 'Generate 3 major cities for the northern continent.'"
+        ...,
+        max_length=2000,
+        description="Instruction for the LLM, e.g. 'Generate 3 major cities for the northern continent.'",
     )
     save_as_entity_type: str | None = Field(
         default=None, description="If provided, the result will be saved as an entity of this type."
@@ -170,7 +172,7 @@ class AgenticGenerateRequest(BaseModel):
 class AgenticGenerateResponse(BaseModel):
     world_id: UUID
     instruction: str
-    content: str
+    content: str = Field(..., max_length=20000)
     entity_id: UUID | None = None
     suggestion_id: UUID | None = None
 
@@ -189,8 +191,8 @@ ExportPreset = Literal[
 
 
 class GenerationSuggestionCreate(BaseModel):
-    instruction: str
-    content: str
+    instruction: str = Field(..., max_length=2000)
+    content: str = Field(..., max_length=20000)
     suggested_name: str | None = Field(default=None, max_length=200)
     suggested_type: str | None = Field(default=None, max_length=100)
 
@@ -226,7 +228,7 @@ class SuggestionApplyRequest(BaseModel):
     entity_id: UUID | None = None
     name: str | None = Field(default=None, max_length=200)
     entity_type: str | None = Field(default=None, max_length=100)
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=20000)
 
 
 class SuggestionApplyResponse(BaseModel):
@@ -240,7 +242,7 @@ class SuggestionApplyResponse(BaseModel):
 class TimelineEventCreate(BaseModel):
     title: str = Field(..., max_length=200)
     event_order: int
-    description: str = ""
+    description: str = Field(default="", max_length=20000)
     participants: list[UUID] = Field(default_factory=list)
     causes: str | None = Field(default=None, max_length=5000)
     consequences: str | None = Field(default=None, max_length=5000)
@@ -271,9 +273,9 @@ class CampaignSessionCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     played_date: str | None = Field(default=None, max_length=120)
     in_world_date: str | None = Field(default=None, max_length=120)
-    recap: str = ""
-    player_actions: str = ""
-    consequences: str = ""
+    recap: str = Field(default="", max_length=20000)
+    player_actions: str = Field(default="", max_length=20000)
+    consequences: str = Field(default="", max_length=20000)
     linked_entity_ids: list[UUID] = Field(default_factory=list)
     linked_relationship_ids: list[UUID] = Field(default_factory=list)
     linked_timeline_event_ids: list[UUID] = Field(default_factory=list)
@@ -284,9 +286,9 @@ class CampaignSessionUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     played_date: str | None = Field(default=None, max_length=120)
     in_world_date: str | None = Field(default=None, max_length=120)
-    recap: str | None = None
-    player_actions: str | None = None
-    consequences: str | None = None
+    recap: str | None = Field(default=None, max_length=20000)
+    player_actions: str | None = Field(default=None, max_length=20000)
+    consequences: str | None = Field(default=None, max_length=20000)
     linked_entity_ids: list[UUID] | None = None
     linked_relationship_ids: list[UUID] | None = None
     linked_timeline_event_ids: list[UUID] | None = None
@@ -307,24 +309,24 @@ class CampaignSessionListResponse(BaseModel):
 
 class LoreNoteCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
-    body: str = ""
+    body: str = Field(default="", max_length=20000)
     subject_type: LoreSubjectType = "world"
     subject_id: UUID | None = None
     visibility: CampaignVisibility = "dm_only"
     truth_state: LoreTruthState = "unknown"
     reveal_condition: str | None = Field(default=None, max_length=1000)
-    handout_text: str | None = None
+    handout_text: str | None = Field(default=None, max_length=20000)
 
 
 class LoreNoteUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
-    body: str | None = None
+    body: str | None = Field(default=None, max_length=20000)
     subject_type: LoreSubjectType | None = None
     subject_id: UUID | None = None
     visibility: CampaignVisibility | None = None
     truth_state: LoreTruthState | None = None
     reveal_condition: str | None = Field(default=None, max_length=1000)
-    handout_text: str | None = None
+    handout_text: str | None = Field(default=None, max_length=20000)
 
 
 class LoreNoteRead(LoreNoteCreate):
@@ -345,7 +347,7 @@ class FactionClockCreate(BaseModel):
     linked_entity_id: UUID | None = None
     segments: int = Field(default=6, ge=1, le=20)
     filled_segments: int = Field(default=0, ge=0, le=20)
-    stakes: str = ""
+    stakes: str = Field(default="", max_length=5000)
     status: Literal["active", "paused", "completed", "failed"] = "active"
     linked_session_ids: list[UUID] = Field(default_factory=list)
     linked_entity_ids: list[UUID] = Field(default_factory=list)
@@ -358,7 +360,7 @@ class FactionClockUpdate(BaseModel):
     linked_entity_id: UUID | None = None
     segments: int | None = Field(default=None, ge=1, le=20)
     filled_segments: int | None = Field(default=None, ge=0, le=20)
-    stakes: str | None = None
+    stakes: str | None = Field(default=None, max_length=5000)
     status: Literal["active", "paused", "completed", "failed"] | None = None
     linked_session_ids: list[UUID] | None = None
     linked_entity_ids: list[UUID] | None = None
@@ -380,7 +382,7 @@ class FactionClockListResponse(BaseModel):
 
 
 class CampaignImpactReviewRequest(BaseModel):
-    instruction: str | None = Field(default=None, max_length=1000)
+    instruction: str | None = Field(default=None, max_length=2000)
 
 
 class CampaignImpactReviewResponse(BaseModel):
@@ -441,7 +443,7 @@ class PlanningBoardRead(PlanningBoardCreate):
 
 class PlanningCardCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
-    description: str = ""
+    description: str = Field(default="", max_length=5000)
     lane: str = Field(default="Backlog", max_length=100)
     position: int = 0
     entity_links: list[UUID] = Field(default_factory=list)
@@ -507,7 +509,7 @@ class DraftCheckHistoryItem(BaseModel):
 
 class DraftCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
-    body: str = Field(..., min_length=1, max_length=50000)
+    body: str = Field(..., min_length=1, max_length=20000)
     status: Literal["draft", "revising", "ready", "archived"] = "draft"
     linked_entity_ids: list[UUID] = Field(default_factory=list)
     linked_relationship_ids: list[UUID] = Field(default_factory=list)
@@ -516,7 +518,7 @@ class DraftCreate(BaseModel):
 
 class DraftUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
-    body: str | None = Field(default=None, min_length=1, max_length=50000)
+    body: str | None = Field(default=None, min_length=1, max_length=20000)
     status: Literal["draft", "revising", "ready", "archived"] | None = None
     linked_entity_ids: list[UUID] | None = None
     linked_relationship_ids: list[UUID] | None = None
@@ -539,7 +541,7 @@ class DraftListResponse(BaseModel):
 
 class DraftExtractionRequest(BaseModel):
     excerpt: str = Field(..., min_length=1, max_length=20000)
-    instruction: str | None = Field(default=None, max_length=1000)
+    instruction: str | None = Field(default=None, max_length=2000)
     max_candidates: int = Field(default=6, ge=1, le=12)
 
 

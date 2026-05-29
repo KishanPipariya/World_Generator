@@ -3,8 +3,10 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from app.deps import get_llm_service, get_world_service
+from app.deps import get_auth_service, get_llm_service, get_world_service
 from app.main import app
+from app.schemas.auth import UserCreate
+from app.services.auth_service import AuthService
 from app.services.world_service import WorldService
 
 
@@ -29,6 +31,40 @@ class _FakeSession:
         pass
         
     def run(self, query, **kwargs):
+        if "CREATE CONSTRAINT" in query or "CREATE INDEX" in query:
+            return _FakeResult([])
+        if "MATCH (u:User)" in query and "RETURN count(u) AS count" in query:
+            return _FakeResult([{"count": len(self.db["users"])}])
+        if "CREATE (u:User" in query:
+            record = {
+                "id": kwargs["id"],
+                "username": kwargs["username"],
+                "email": kwargs["email"],
+                "password_hash": kwargs["password_hash"],
+                "created_at": kwargs["created_at"],
+            }
+            self.db["users"][kwargs["id"]] = record
+            return _FakeResult([{"props": record}])
+        if "MATCH (u:User {id: $id})" in query:
+            record = self.db["users"].get(kwargs["id"])
+            return _FakeResult([{"props": record}] if record else [])
+        if "MATCH (u:User)" in query and "u.username = $username OR u.email = $email" in query:
+            record = next(
+                (
+                    user
+                    for user in self.db["users"].values()
+                    if user["username"] == kwargs["username"] or user["email"] == kwargs["email"]
+                ),
+                None,
+            )
+            return _FakeResult([{"props": record}] if record else [])
+        if "MATCH (w:World)" in query and "w.owner_id IS NULL" in query:
+            assigned = 0
+            for world in self.db["worlds"].values():
+                if world.get("owner_id") is None:
+                    world["owner_id"] = kwargs["owner_id"]
+                    assigned += 1
+            return _FakeResult([{"assigned": assigned}])
         if "CREATE (w:World" in query:
             self.db["worlds"][kwargs["id"]] = kwargs
             return _FakeResult([kwargs])
@@ -559,13 +595,19 @@ class _FakeSession:
             )
         if "id: $id" in query or "properties(w).id = $id" in query:
             rec = self.db["worlds"].get(kwargs["id"])
+            if rec and kwargs.get("owner_id") is not None and rec.get("owner_id") != kwargs["owner_id"]:
+                rec = None
             return _FakeResult([{"props": rec}] if rec else [])
-        return _FakeResult([{"props": world} for world in self.db["worlds"].values()])
+        worlds = self.db["worlds"].values()
+        if kwargs.get("owner_id") is not None:
+            worlds = [world for world in worlds if world.get("owner_id") == kwargs["owner_id"]]
+        return _FakeResult([{"props": world} for world in worlds])
 
 class _FakeDriver:
     def __init__(self):
         self.db = {
             "worlds": {},
+            "users": {},
             "entities": {},
             "relationships": {},
             "suggestions": {},
@@ -609,19 +651,66 @@ class _JsonLLM(_HealthLLM):
 
 @pytest.fixture(autouse=True)
 def _override_services():
-    fresh = WorldService(driver=_FakeDriver(), llm=_HealthLLM())
+    driver = _FakeDriver()
+    fresh = WorldService(driver=driver, llm=_HealthLLM())
     app.dependency_overrides[get_world_service] = lambda: fresh
+    app.dependency_overrides[get_auth_service] = lambda: AuthService(driver=driver)
     app.dependency_overrides[get_llm_service] = lambda: _HealthLLM()
     yield
     app.dependency_overrides.clear()
 
 
-def test_health_includes_llm_status(client: TestClient) -> None:
+def test_health_is_reduced_public_status(client: TestClient) -> None:
     r = client.get("/health")
     assert r.status_code == 200
     data = r.json()
-    assert data["status"] == "ok"
-    assert data["llm"] == {"mode": "openrouter", "enabled": True}
+    assert data == {"status": "ok"}
+
+
+def test_worlds_require_bearer_auth(client: TestClient) -> None:
+    r = client.get("/worlds", headers={"Authorization": ""})
+    assert r.status_code == 401
+
+
+def test_register_hashes_password_and_enforces_unique_username_email() -> None:
+    driver = _FakeDriver()
+    auth = AuthService(driver=driver)
+    user = auth.register(
+        UserCreate(username="alice", email="alice@example.com", password="test-password")
+    )
+    stored = driver.db["users"][str(user.id)]
+    assert stored["password_hash"] != "test-password"
+    assert auth.authenticate("alice", "test-password") is not None
+    with pytest.raises(ValueError):
+        auth.register(UserCreate(username="alice", email="other@example.com", password="test-password"))
+    with pytest.raises(ValueError):
+        auth.register(UserCreate(username="other", email="alice@example.com", password="test-password"))
+
+
+def test_first_registered_user_claims_only_existing_legacy_worlds() -> None:
+    driver = _FakeDriver()
+    driver.db["worlds"]["legacy"] = {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "title": "Legacy",
+        "tone": None,
+        "era_notes": None,
+        "seed": None,
+        "created_at": "2020-01-01T00:00:00+00:00",
+    }
+    auth = AuthService(driver=driver)
+    first = auth.register(UserCreate(username="first", email="first@example.com", password="test-password"))
+    assert driver.db["worlds"]["legacy"]["owner_id"] == str(first.id)
+
+    driver.db["worlds"]["new-legacy"] = {
+        "id": "00000000-0000-0000-0000-000000000002",
+        "title": "New Legacy",
+        "tone": None,
+        "era_notes": None,
+        "seed": None,
+        "created_at": "2020-01-01T00:00:00+00:00",
+    }
+    auth.register(UserCreate(username="second", email="second@example.com", password="test-password"))
+    assert driver.db["worlds"]["new-legacy"].get("owner_id") is None
 
 
 def test_create_list_get_world(client: TestClient) -> None:
@@ -641,6 +730,24 @@ def test_create_list_get_world(client: TestClient) -> None:
     r_get = client.get(f"/worlds/{wid}")
     assert r_get.status_code == 200
     assert r_get.json()["id"] == wid
+
+
+def test_users_only_see_their_own_worlds(client: TestClient) -> None:
+    first_world = client.post("/worlds", json={"title": "Private"}).json()
+
+    second = TestClient(app, base_url="http://testserver/api/v1")
+    second.post(
+        "/auth/register",
+        json={"username": "otheruser", "email": "other@example.com", "password": "test-password"},
+    )
+    token = second.post(
+        "/auth/login",
+        json={"username": "otheruser", "password": "test-password"},
+    ).json()["access_token"]
+    second.headers.update({"Authorization": f"Bearer {token}"})
+
+    assert second.get("/worlds").json() == []
+    assert second.get(f"/worlds/{first_world['id']}").status_code == 404
 
 
 def test_delete_world_removes_world_and_children(client: TestClient) -> None:
@@ -788,6 +895,15 @@ def test_entity_crud(client: TestClient) -> None:
     assert deleted.status_code == 204
     listed_again = client.get(f"/worlds/{wid}/entities")
     assert listed_again.json()["entities"] == []
+
+
+def test_oversized_entity_description_is_rejected(client: TestClient) -> None:
+    world = client.post("/worlds", json={"title": "Limits"}).json()
+    response = client.post(
+        f"/worlds/{world['id']}/entities",
+        json={"name": "Too Much", "entity_type": "Concept", "description": "x" * 20001},
+    )
+    assert response.status_code == 422
 
 
 def test_relationship_crud_and_export(client: TestClient) -> None:

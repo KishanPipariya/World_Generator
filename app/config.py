@@ -23,6 +23,9 @@ class Settings:
     openrouter_app_title: str | None
     llm_max_tokens: int
     llm_temperature: float
+    jwt_secret: str
+    jwt_expires_minutes: int
+    allow_signup: bool
 
 
 def load_settings() -> Settings:
@@ -38,10 +41,12 @@ def load_settings() -> Settings:
         "https://openrouter.ai/api/v1",
     ).rstrip("/")
 
+    jwt_secret = os.environ.get("WORLD_GENERATOR_JWT_SECRET", "dev-insecure-change-me-at-least-32-bytes")
+
     return Settings(
         neo4j_uri=os.environ.get("WORLD_GENERATOR_NEO4J_URI", "bolt://localhost:7687"),
         neo4j_user=os.environ.get("WORLD_GENERATOR_NEO4J_USER", "neo4j"),
-        neo4j_password=os.environ.get("WORLD_GENERATOR_NEO4J_PASSWORD", "password"),
+        neo4j_password=os.environ.get("WORLD_GENERATOR_NEO4J_PASSWORD", ""),
         llm_backend=backend,
         openrouter_api_key=os.environ.get("WORLD_GENERATOR_OPENROUTER_API_KEY"),
         openrouter_model=os.environ.get("WORLD_GENERATOR_OPENROUTER_MODEL"),
@@ -50,4 +55,7 @@ def load_settings() -> Settings:
         openrouter_app_title=os.environ.get("WORLD_GENERATOR_OPENROUTER_APP_TITLE"),
         llm_max_tokens=int(os.environ.get("WORLD_GENERATOR_LLM_MAX_TOKENS", "768")),
         llm_temperature=float(os.environ.get("WORLD_GENERATOR_LLM_TEMPERATURE", "0.65")),
+        jwt_secret=jwt_secret,
+        jwt_expires_minutes=int(os.environ.get("WORLD_GENERATOR_JWT_EXPIRES_MINUTES", "1440")),
+        allow_signup=(os.environ.get("WORLD_GENERATOR_ALLOW_SIGNUP", "true").strip().lower() == "true"),
     )

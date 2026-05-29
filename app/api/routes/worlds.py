@@ -63,9 +63,10 @@ from app.schemas.world import (
     WorldCreate,
     WorldRead,
 )
+from app.security import check_generation_rate_limit, require_world_access
 from app.services.world_service import WorldService
 
-router = APIRouter(prefix="/worlds", tags=["worlds"])
+router = APIRouter(prefix="/worlds", tags=["worlds"], dependencies=[Depends(require_world_access)])
 
 
 @router.post("", response_model=WorldRead, status_code=status.HTTP_201_CREATED)
@@ -110,6 +111,7 @@ def delete_world(
 def generate_stub(
     world_id: UUID,
     body: GenerateRequest | None = None,
+    _rate_limited: object = Depends(check_generation_rate_limit),
     svc: WorldService = Depends(get_world_service),
 ) -> GenerateResponse:
     section = (body.section if body else None)
@@ -124,6 +126,7 @@ def generate_stub(
 def agentic_generate(
     world_id: UUID,
     body: AgenticGenerateRequest,
+    _rate_limited: object = Depends(check_generation_rate_limit),
     svc: WorldService = Depends(get_world_service),
 ) -> AgenticGenerateResponse:
     try:
@@ -546,6 +549,7 @@ def create_campaign_impact_review(
     world_id: UUID,
     session_id: UUID,
     body: CampaignImpactReviewRequest | None = None,
+    _rate_limited: object = Depends(check_generation_rate_limit),
     svc: WorldService = Depends(get_world_service),
 ) -> CampaignImpactReviewResponse:
     suggestion = svc.create_session_impact_review(
@@ -780,6 +784,7 @@ def extract_draft_excerpt(
     world_id: UUID,
     draft_id: UUID,
     body: DraftExtractionRequest,
+    _rate_limited: object = Depends(check_generation_rate_limit),
     svc: WorldService = Depends(get_world_service),
 ) -> DraftExtractionResponse:
     try:

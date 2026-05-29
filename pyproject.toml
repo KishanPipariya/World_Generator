@@ -5,10 +5,14 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "bcrypt<5",
+    "email-validator>=2.2.0",
     "fastapi>=0.115.0",
     "httpx>=0.28.1",
     "neo4j>=6.1.0",
     "openai>=1.0.0",
+    "passlib[bcrypt]>=1.7.4",
+    "PyJWT>=2.10.1",
     "python-dotenv>=1.2.2",
     "uvicorn[standard]>=0.32.0",
 ]

@@ -3,10 +3,10 @@ services:
     image: neo4j:5.12
     container_name: world_generator_neo4j
     ports:
-      - "7474:7474" # HTTP
-      - "7687:7687" # Bolt
+      - "127.0.0.1:7474:7474" # HTTP
+      - "127.0.0.1:7687:7687" # Bolt
     environment:
-      - NEO4J_AUTH=${WORLD_GENERATOR_NEO4J_USER:-neo4j}/${WORLD_GENERATOR_NEO4J_PASSWORD:-password}
+      - NEO4J_AUTH=${WORLD_GENERATOR_NEO4J_USER:-neo4j}/${WORLD_GENERATOR_NEO4J_PASSWORD:?Set WORLD_GENERATOR_NEO4J_PASSWORD}
     volumes:
       - neo4j_data:/data
 

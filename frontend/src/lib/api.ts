@@ -1,8 +1,41 @@
 import axios from 'axios';
 
+export const AUTH_TOKEN_KEY = 'world_generator_access_token';
+
 const api = axios.create({
-  baseURL: 'http://localhost:8000/api/v1',
+  baseURL: import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1',
 });
+
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem(AUTH_TOKEN_KEY);
+      window.dispatchEvent(new Event('world-generator-auth-expired'));
+    }
+    return Promise.reject(error);
+  },
+);
+
+export interface User {
+  id: string;
+  username: string;
+  email: string;
+  created_at: string;
+}
+
+export interface TokenResponse {
+  access_token: string;
+  token_type: 'bearer';
+}
 
 export interface World {
   id: string;
@@ -252,11 +285,26 @@ export interface DraftPassage {
 
 export interface HealthStatus {
   status: string;
-  llm: {
-    mode: string;
-    enabled: boolean;
-  };
 }
+
+export const registerUser = async (payload: {
+  username: string;
+  email: string;
+  password: string;
+}): Promise<User> => {
+  const response = await api.post('/auth/register', payload);
+  return response.data;
+};
+
+export const loginUser = async (payload: { username: string; password: string }): Promise<TokenResponse> => {
+  const response = await api.post('/auth/login', payload);
+  return response.data;
+};
+
+export const fetchMe = async (): Promise<User> => {
+  const response = await api.get('/auth/me');
+  return response.data;
+};
 
 export const fetchWorlds = async (): Promise<World[]> => {
   const response = await api.get('/worlds');

@@ -55,17 +55,30 @@ npm install
 Start Neo4j:
 
 ```bash
+export WORLD_GENERATOR_NEO4J_PASSWORD='replace-with-a-local-password'
 docker-compose up -d
 ```
 
-The default database connection is:
+The local database connection is:
 
 - URI: `bolt://localhost:7687`
 - User: `neo4j`
-- Password: `password`
+- Password: value of `WORLD_GENERATOR_NEO4J_PASSWORD`
 
 Override these with `WORLD_GENERATOR_NEO4J_URI`,
 `WORLD_GENERATOR_NEO4J_USER`, and `WORLD_GENERATOR_NEO4J_PASSWORD`.
+Do not deploy with the historical `neo4j/password` default.
+
+Authentication uses open signup by default. Configure these before deploying:
+
+```text
+WORLD_GENERATOR_JWT_SECRET=<strong random secret>
+WORLD_GENERATOR_JWT_EXPIRES_MINUTES=1440
+WORLD_GENERATOR_ALLOW_SIGNUP=true
+```
+
+Set `WORLD_GENERATOR_ALLOW_SIGNUP=false` after provisioning users if public
+signup should be closed.
 
 ## Running Locally
 
@@ -119,10 +132,8 @@ WORLD_GENERATOR_LLM_TEMPERATURE=0.65
 `WORLD_GENERATOR_OPENROUTER_APP_TITLE` are optional OpenRouter attribution
 headers sent with each chat completion request.
 
-`GET /api/v1/health` reports the selected LLM mode and whether generation is
-enabled. If the backend is `openrouter` but either API key or model is missing,
-the app reports `{"mode": "none", "enabled": false}` and continues without LLM
-calls.
+`GET /api/v1/health` only reports public service status. LLM mode details are
+not exposed publicly.
 
 ## API Examples
 
@@ -132,10 +143,23 @@ Health:
 curl -s http://127.0.0.1:8000/api/v1/health
 ```
 
+Register and login:
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username":"writer","email":"writer@example.com","password":"replace-me-strongly"}'
+
+TOKEN=$(curl -s -X POST http://127.0.0.1:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"writer","password":"replace-me-strongly"}' | jq -r .access_token)
+```
+
 Create a world:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/api/v1/worlds \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"title": "The Ember Archipelago", "tone": "mythic intrigue"}'
 ```
@@ -144,6 +168,7 @@ Create an entity:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/api/v1/worlds/WORLD_ID/entities \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Mara Vey",
@@ -157,6 +182,7 @@ Run a passage check:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/api/v1/worlds/WORLD_ID/passage-check \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"passage": "Mara entered Ithoros before the bells cracked."}'
 ```
@@ -165,6 +191,7 @@ Save a draft passage:
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/api/v1/worlds/WORLD_ID/drafts \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "title": "Opening Scene",
@@ -177,13 +204,15 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/worlds/WORLD_ID/drafts \
 Check a saved draft and append the result to its check history:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8000/api/v1/worlds/WORLD_ID/drafts/DRAFT_ID/check
+curl -s -X POST http://127.0.0.1:8000/api/v1/worlds/WORLD_ID/drafts/DRAFT_ID/check \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 Export Markdown:
 
 ```bash
-curl -s "http://127.0.0.1:8000/api/v1/worlds/WORLD_ID/export/markdown?preset=full_bible"
+curl -s "http://127.0.0.1:8000/api/v1/worlds/WORLD_ID/export/markdown?preset=full_bible" \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 Supported export presets are `full_bible`, `character_dossier`,

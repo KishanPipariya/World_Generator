@@ -37,6 +37,7 @@ import {
   createPlanningBoard,
   createPlanningCard,
   createRelationship,
+  deleteDraft,
   deleteEntity,
   deleteWorld,
   deleteRelationship,
@@ -106,6 +107,7 @@ const GRAPH_LAYOUTS: { value: GraphLayoutMode; label: string }[] = [
   { value: 'faction_clusters', label: 'Faction clusters' },
   { value: 'timeline_order', label: 'Timeline' },
 ];
+const DRAFT_STATUSES: DraftPassage['status'][] = ['draft', 'revising', 'ready', 'archived'];
 const TEMPLATE_FIELDS: Record<string, string[]> = {
   Character: ['goal', 'secret', 'fear', 'voice'],
   Location: ['hazards', 'economy', 'culture', 'landmark'],
@@ -134,6 +136,7 @@ const PROMPTS = [
 ];
 
 type EntityForm = Pick<Entity, 'name' | 'entity_type' | 'description' | 'structured_fields'>;
+type DraftForm = Pick<DraftPassage, 'title' | 'body' | 'status' | 'linked_entity_ids' | 'linked_relationship_ids' | 'linked_timeline_event_ids'>;
 type WorkspaceView = 'canon' | 'drafts' | 'timeline' | 'planning' | 'campaign' | 'graph';
 
 const blankEntity: EntityForm = {
@@ -141,6 +144,15 @@ const blankEntity: EntityForm = {
   entity_type: 'Character',
   description: '',
   structured_fields: {},
+};
+
+const blankDraft: DraftForm = {
+  title: '',
+  body: '',
+  status: 'draft',
+  linked_entity_ids: [],
+  linked_relationship_ids: [],
+  linked_timeline_event_ids: [],
 };
 
 const displayType = (type: string) => {
@@ -153,6 +165,13 @@ const displayType = (type: string) => {
   return 'Other';
 };
 
+const formatDateTime = (value: string) => new Date(value).toLocaleString(undefined, {
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+});
+
 const WorldDetail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -162,7 +181,7 @@ const WorldDetail = () => {
   const [suggestions, setSuggestions] = useState<GenerationSuggestion[]>([]);
   const [drafts, setDrafts] = useState<DraftPassage[]>([]);
   const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
-  const [draftForm, setDraftForm] = useState({ title: '', body: '' });
+  const [draftForm, setDraftForm] = useState<DraftForm>(blankDraft);
   const [draftSelection, setDraftSelection] = useState('');
   const [draftInstruction, setDraftInstruction] = useState('');
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
@@ -282,6 +301,51 @@ const WorldDetail = () => {
   const pendingSuggestions = useMemo(
     () => suggestions.filter((suggestion) => suggestion.status === 'pending'),
     [suggestions],
+  );
+
+  const selectedDraftSuggestions = useMemo(
+    () => pendingSuggestions.filter((suggestion) => (
+      suggestion.source_type === 'draft' && suggestion.source_id === selectedDraftId
+    )),
+    [pendingSuggestions, selectedDraftId],
+  );
+
+  const draftFormDirty = useMemo(() => {
+    if (!selectedDraft) {
+      return Boolean(
+        draftForm.title.trim()
+        || draftForm.body.trim()
+        || draftForm.status !== blankDraft.status
+        || draftForm.linked_entity_ids.length
+        || draftForm.linked_relationship_ids.length
+        || draftForm.linked_timeline_event_ids.length,
+      );
+    }
+    return (
+      draftForm.title !== selectedDraft.title
+      || draftForm.body !== selectedDraft.body
+      || draftForm.status !== selectedDraft.status
+      || draftForm.linked_entity_ids.join('|') !== selectedDraft.linked_entity_ids.join('|')
+      || draftForm.linked_relationship_ids.join('|') !== selectedDraft.linked_relationship_ids.join('|')
+      || draftForm.linked_timeline_event_ids.join('|') !== selectedDraft.linked_timeline_event_ids.join('|')
+    );
+  }, [draftForm, selectedDraft]);
+
+  const latestDraftCheck = selectedDraft?.check_history[selectedDraft.check_history.length - 1] ?? null;
+
+  const linkedDraftEntities = useMemo(
+    () => entities.filter((entity) => draftForm.linked_entity_ids.includes(entity.id)),
+    [draftForm.linked_entity_ids, entities],
+  );
+
+  const linkedDraftRelationships = useMemo(
+    () => relationships.filter((relationship) => draftForm.linked_relationship_ids.includes(relationship.id)),
+    [draftForm.linked_relationship_ids, relationships],
+  );
+
+  const linkedDraftTimelineEvents = useMemo(
+    () => timelineEvents.filter((event) => draftForm.linked_timeline_event_ids.includes(event.id)),
+    [draftForm.linked_timeline_event_ids, timelineEvents],
   );
 
   const archivedIssueStates = useMemo(
@@ -405,7 +469,14 @@ const WorldDetail = () => {
     const nextDraft = draftData[0] ?? null;
     setSelectedDraftId((current) => current ?? nextDraft?.id ?? null);
     if (nextDraft) {
-      setDraftForm((current) => current.title || current.body ? current : { title: nextDraft.title, body: nextDraft.body });
+      setDraftForm((current) => current.title || current.body ? current : {
+        title: nextDraft.title,
+        body: nextDraft.body,
+        status: nextDraft.status,
+        linked_entity_ids: nextDraft.linked_entity_ids,
+        linked_relationship_ids: nextDraft.linked_relationship_ids,
+        linked_timeline_event_ids: nextDraft.linked_timeline_event_ids,
+      });
     }
     setHealth(healthData);
     setSelectedEntityId((current) => current ?? entityData[0]?.id ?? null);
@@ -431,13 +502,13 @@ const WorldDetail = () => {
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (!entityFormDirty) return;
+      if (!entityFormDirty && !draftFormDirty) return;
       event.preventDefault();
       event.returnValue = '';
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [entityFormDirty]);
+  }, [draftFormDirty, entityFormDirty]);
 
   useEffect(() => {
     if (selectedEntity) {
@@ -458,7 +529,14 @@ const WorldDetail = () => {
 
   useEffect(() => {
     if (!selectedDraft) return;
-    setDraftForm({ title: selectedDraft.title, body: selectedDraft.body });
+    setDraftForm({
+      title: selectedDraft.title,
+      body: selectedDraft.body,
+      status: selectedDraft.status,
+      linked_entity_ids: selectedDraft.linked_entity_ids,
+      linked_relationship_ids: selectedDraft.linked_relationship_ids,
+      linked_timeline_event_ids: selectedDraft.linked_timeline_event_ids,
+    });
     setDraftSelection('');
   }, [selectedDraft]);
 
@@ -483,18 +561,43 @@ const WorldDetail = () => {
   };
 
   const refreshDrafts = async () => {
-    if (!id) return;
+    if (!id) return [];
     const draftData = await fetchDrafts(id).catch(() => []);
     setDrafts(draftData);
-    setSelectedDraftId((current) => current ?? draftData[0]?.id ?? null);
+    setSelectedDraftId((current) => (
+      current && draftData.some((draft) => draft.id === current) ? current : draftData[0]?.id ?? null
+    ));
+    return draftData;
   };
 
   const handleDraftSelect = (draftId: string) => {
+    if (draftFormDirty && !window.confirm('Discard unsaved draft edits?')) return;
     const draft = drafts.find((item) => item.id === draftId);
     setSelectedDraftId(draftId || null);
-    if (draft) setDraftForm({ title: draft.title, body: draft.body });
+    if (draft) {
+      setDraftForm({
+        title: draft.title,
+        body: draft.body,
+        status: draft.status,
+        linked_entity_ids: draft.linked_entity_ids,
+        linked_relationship_ids: draft.linked_relationship_ids,
+        linked_timeline_event_ids: draft.linked_timeline_event_ids,
+      });
+    }
     setDraftSelection('');
   };
+
+  const handleNewDraft = () => {
+    if (draftFormDirty && !window.confirm('Discard unsaved draft edits?')) return;
+    setSelectedDraftId(null);
+    setDraftForm(blankDraft);
+    setDraftSelection('');
+    setDraftInstruction('');
+  };
+
+  const readMultiSelect = (select: HTMLSelectElement) => (
+    Array.from(select.selectedOptions).map((option) => option.value)
+  );
 
   const selectEntity = (entityId: string | null) => {
     if (entityFormDirty && !window.confirm('Discard unsaved entity edits?')) return;
@@ -509,14 +612,55 @@ const WorldDetail = () => {
     setErrorMessage('');
     try {
       const saved = selectedDraft
-        ? await updateDraft(id, selectedDraft.id, { title: draftForm.title.trim(), body: draftForm.body })
-        : await createDraft(id, { title: draftForm.title.trim(), body: draftForm.body });
+        ? await updateDraft(id, selectedDraft.id, {
+          title: draftForm.title.trim(),
+          body: draftForm.body,
+          status: draftForm.status,
+          linked_entity_ids: draftForm.linked_entity_ids,
+          linked_relationship_ids: draftForm.linked_relationship_ids,
+          linked_timeline_event_ids: draftForm.linked_timeline_event_ids,
+        })
+        : await createDraft(id, {
+          title: draftForm.title.trim(),
+          body: draftForm.body,
+          status: draftForm.status,
+          linked_entity_ids: draftForm.linked_entity_ids,
+          linked_relationship_ids: draftForm.linked_relationship_ids,
+          linked_timeline_event_ids: draftForm.linked_timeline_event_ids,
+        });
       await refreshDrafts();
       setSelectedDraftId(saved.id);
       setDraftSelection('');
       setStatusMessage(selectedDraft ? 'Draft saved.' : 'Draft created.');
     } catch {
       setErrorMessage('Unable to save draft.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDraftDelete = async () => {
+    if (!id || !selectedDraft) return;
+    if (!window.confirm(`Delete draft "${selectedDraft.title}"?`)) return;
+    setBusy(true);
+    setErrorMessage('');
+    try {
+      await deleteDraft(id, selectedDraft.id);
+      const draftData = await refreshDrafts();
+      const nextDraft = draftData.find((draft) => draft.id !== selectedDraft.id) ?? draftData[0] ?? null;
+      setSelectedDraftId(nextDraft?.id ?? null);
+      setDraftForm(nextDraft ? {
+        title: nextDraft.title,
+        body: nextDraft.body,
+        status: nextDraft.status,
+        linked_entity_ids: nextDraft.linked_entity_ids,
+        linked_relationship_ids: nextDraft.linked_relationship_ids,
+        linked_timeline_event_ids: nextDraft.linked_timeline_event_ids,
+      } : blankDraft);
+      setDraftSelection('');
+      setStatusMessage('Draft deleted.');
+    } catch {
+      setErrorMessage('Unable to delete draft.');
     } finally {
       setBusy(false);
     }
@@ -538,6 +682,7 @@ const WorldDetail = () => {
         max_candidates: 6,
       });
       await refreshReviewData();
+      setDraftSelection('');
       setStatusMessage(`${result.suggestions.length} canon suggestion(s) queued.`);
     } catch {
       setErrorMessage('Unable to extract canon suggestions from draft selection.');
@@ -1205,9 +1350,9 @@ const WorldDetail = () => {
           <div className="tags">
             {world.tone && <span className="badge badge-primary">{world.tone}</span>}
           <span className="badge">{entities.length} entities</span>
-          <span className={`badge ${health?.llm.enabled ? 'badge-good' : 'badge-muted'}`}>
+          <span className={`badge ${health?.status === 'ok' ? 'badge-good' : 'badge-muted'}`}>
             <Activity size={13} />
-            {health ? `LLM ${health.llm.enabled ? 'ready' : 'stub'}` : 'Backend unknown'}
+            {health?.status === 'ok' ? 'Backend ready' : 'Backend unknown'}
           </span>
         </div>
       </div>
@@ -1615,11 +1760,8 @@ const WorldDetail = () => {
                 <div className="section-header">
                   <FileText className="text-primary" />
                   <h2>Drafts</h2>
-                  <button className="icon-button" type="button" title="New draft" aria-label="Create new draft" onClick={() => {
-                    setSelectedDraftId(null);
-                    setDraftForm({ title: '', body: '' });
-                    setDraftSelection('');
-                  }}>
+                  {draftFormDirty && <span className="dirty-indicator">Unsaved</span>}
+                  <button className="icon-button" type="button" title="New draft" aria-label="Create new draft" onClick={handleNewDraft}>
                     <Plus size={16} />
                   </button>
                 </div>
@@ -1634,22 +1776,40 @@ const WorldDetail = () => {
                         type="button"
                         onClick={() => handleDraftSelect(draft.id)}
                       >
-                        <span>{draft.title}</span>
-                        <small>{draft.status}</small>
+                        <strong>{draft.title}</strong>
+                        <span className="draft-list-meta">
+                          <small>{draft.status}</small>
+                          <small>{formatDateTime(draft.updated_at)}</small>
+                          <small>{draft.check_history.length} check{draft.check_history.length === 1 ? '' : 's'}</small>
+                        </span>
                       </button>
                     ))}
                   </div>
                   <form className="draft-editor" onSubmit={handleDraftSave}>
-                    <label className="field-label">
-                      <span>Draft title</span>
-                      <input
-                        className="form-input"
-                        value={draftForm.title}
-                        onChange={(event) => setDraftForm({ ...draftForm, title: event.target.value })}
-                        placeholder="Draft title"
-                        required
-                      />
-                    </label>
+                    <div className="form-row compact">
+                      <label className="field-label">
+                        <span>Draft title</span>
+                        <input
+                          className="form-input"
+                          value={draftForm.title}
+                          onChange={(event) => setDraftForm({ ...draftForm, title: event.target.value })}
+                          placeholder="Draft title"
+                          required
+                        />
+                      </label>
+                      <label className="field-label">
+                        <span>Status</span>
+                        <select
+                          className="form-input"
+                          value={draftForm.status}
+                          onChange={(event) => setDraftForm({ ...draftForm, status: event.target.value as DraftPassage['status'] })}
+                        >
+                          {DRAFT_STATUSES.map((status) => (
+                            <option key={status} value={status}>{status}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
                     <label className="field-label">
                       <span>Draft body</span>
                       <textarea
@@ -1664,6 +1824,94 @@ const WorldDetail = () => {
                         rows={8}
                       />
                     </label>
+                    <div className="draft-link-grid">
+                      <label className="field-label">
+                        <span>Linked entities</span>
+                        <select
+                          className="form-input"
+                          multiple
+                          value={draftForm.linked_entity_ids}
+                          onChange={(event) => setDraftForm({ ...draftForm, linked_entity_ids: readMultiSelect(event.currentTarget) })}
+                        >
+                          {entities.map((entity) => (
+                            <option key={entity.id} value={entity.id}>{entity.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="field-label">
+                        <span>Linked relationships</span>
+                        <select
+                          className="form-input"
+                          multiple
+                          value={draftForm.linked_relationship_ids}
+                          onChange={(event) => setDraftForm({ ...draftForm, linked_relationship_ids: readMultiSelect(event.currentTarget) })}
+                        >
+                          {relationships.map((relationship) => (
+                            <option key={relationship.id} value={relationship.id}>
+                              {relationship.source_entity_name} {relationship.relation_type} {relationship.target_entity_name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="field-label">
+                        <span>Linked timeline</span>
+                        <select
+                          className="form-input"
+                          multiple
+                          value={draftForm.linked_timeline_event_ids}
+                          onChange={(event) => setDraftForm({ ...draftForm, linked_timeline_event_ids: readMultiSelect(event.currentTarget) })}
+                        >
+                          {timelineEvents.map((event) => (
+                            <option key={event.id} value={event.id}>{event.event_order}. {event.title}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+
+                    {(linkedDraftEntities.length > 0 || linkedDraftRelationships.length > 0 || linkedDraftTimelineEvents.length > 0) && (
+                      <aside className="draft-context-panel" aria-label="Linked canon context">
+                        <strong>Linked canon</strong>
+                        <div className="canon-chip-list">
+                          {linkedDraftEntities.map((entity) => (
+                            <button
+                              className="canon-chip"
+                              key={entity.id}
+                              type="button"
+                              onClick={() => {
+                                selectEntity(entity.id);
+                                setActiveView('canon');
+                              }}
+                            >
+                              {entity.name}
+                            </button>
+                          ))}
+                          {linkedDraftRelationships.map((relationship) => (
+                            <button
+                              className="canon-chip"
+                              key={relationship.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedRelationshipId(relationship.id);
+                                setActiveView('canon');
+                              }}
+                            >
+                              {relationship.source_entity_name} {relationship.relation_type} {relationship.target_entity_name}
+                            </button>
+                          ))}
+                          {linkedDraftTimelineEvents.map((event) => (
+                            <button
+                              className="canon-chip"
+                              key={event.id}
+                              type="button"
+                              onClick={() => setActiveView('timeline')}
+                            >
+                              {event.event_order}. {event.title}
+                            </button>
+                          ))}
+                        </div>
+                      </aside>
+                    )}
+
                     <label className="field-label">
                       <span>Extraction focus</span>
                       <input
@@ -1673,23 +1921,143 @@ const WorldDetail = () => {
                         placeholder="Optional instruction"
                       />
                     </label>
+                    {draftSelection && (
+                      <div className="excerpt-preview" aria-label="Selected excerpt preview">
+                        <span>Selected excerpt</span>
+                        <p>{draftSelection}</p>
+                      </div>
+                    )}
                     <div className="form-actions">
                       <button className="btn btn-primary" type="submit" disabled={busy}>
                         <Save size={16} />
                         Save Draft
                       </button>
-                      <button className="btn btn-secondary" type="button" onClick={handleDraftCheck} disabled={!selectedDraft || busy}>
+                      <button className="btn btn-secondary" type="button" onClick={handleDraftCheck} disabled={!selectedDraft || draftFormDirty || busy}>
                         <ClipboardCheck size={16} />
                         Check
                       </button>
-                      <button className="btn btn-secondary" type="button" onClick={handleDraftExtract} disabled={!selectedDraft || !draftSelection || busy}>
+                      <button className="btn btn-secondary" type="button" onClick={handleDraftExtract} disabled={!selectedDraft || draftFormDirty || !draftSelection || busy}>
                         <Sparkles size={16} />
                         Extract
                       </button>
+                      {selectedDraft && (
+                        <button className="btn btn-danger" type="button" onClick={handleDraftDelete} disabled={busy}>
+                          <Trash2 size={16} />
+                          Delete
+                        </button>
+                      )}
                     </div>
                   </form>
                 </div>
               </section>
+
+              {selectedDraft && (
+                <section className="glass content-section">
+                  <div className="section-header">
+                    <ClipboardCheck className="text-primary" />
+                    <h2>Draft Review</h2>
+                    {latestDraftCheck && <span className="review-badge">{latestDraftCheck.issues.length} latest issues</span>}
+                  </div>
+                  {latestDraftCheck ? (
+                    <div className="draft-review">
+                      <div className="draft-check-summary">
+                        <strong>{latestDraftCheck.summary}</strong>
+                        <span>{formatDateTime(latestDraftCheck.checked_at)}</span>
+                      </div>
+                      {latestDraftCheck.issues.length === 0 ? (
+                        <p className="text-muted">No canon issues found in the latest check.</p>
+                      ) : (
+                        <div className="issue-list">
+                          {latestDraftCheck.issues.map((issue, index) => {
+                            const linkedEntity = entities.find((entity) => entity.id === issue.entity_id);
+                            return (
+                              <article className={`issue-item ${issue.severity}`} key={`${issue.code}-${index}`}>
+                                <div className="issue-content">
+                                  <span className="issue-severity">{issue.severity}</span>
+                                  <div className="issue-body">
+                                    <strong>{issue.message}</strong>
+                                    <span className="issue-code">{linkedEntity ? linkedEntity.name : issue.code}</span>
+                                  </div>
+                                </div>
+                              </article>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {selectedDraft.check_history.length > 1 && (
+                        <div className="draft-history">
+                          <strong>Check history</strong>
+                          {selectedDraft.check_history.slice().reverse().map((item) => (
+                            <div className="draft-history-item" key={`${item.checked_at}-${item.summary}`}>
+                              <span>{formatDateTime(item.checked_at)}</span>
+                              <span>{item.issues.length} issue{item.issues.length === 1 ? '' : 's'}</span>
+                              <p>{item.summary}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-muted">Run a saved draft check to see canon issues and history here.</p>
+                  )}
+                </section>
+              )}
+
+              {selectedDraft && selectedDraftSuggestions.length > 0 && (
+                <section className="glass content-section">
+                  <div className="section-header">
+                    <Sparkles className="text-primary" />
+                    <h2>Draft Suggestions</h2>
+                    <span className="review-badge">{selectedDraftSuggestions.length} pending</span>
+                  </div>
+                  <div className="suggestion-list">
+                    {selectedDraftSuggestions.map((suggestion) => (
+                      <article className="suggestion-item" key={suggestion.id}>
+                        <div>
+                          <strong>{suggestion.suggested_name || 'Draft suggestion'}</strong>
+                          <p className="text-muted">{suggestion.instruction}</p>
+                          <div className="suggestion-badges">
+                            <span>{(suggestion.candidate_kind ?? 'entity').replace('_', ' ')}</span>
+                            <span>draft</span>
+                          </div>
+                          {suggestion.source_excerpt && <p className="excerpt-inline">{suggestion.source_excerpt}</p>}
+                          <pre className="lore-content compact-lore">{suggestion.content}</pre>
+                        </div>
+                        <div className="form-actions">
+                          {(suggestion.candidate_kind === null || suggestion.candidate_kind === 'entity') && (
+                            <>
+                              <button className="btn btn-secondary" type="button" onClick={() => handleSuggestionApply(suggestion, 'append_to_entity')} disabled={!selectedEntity || busy}>
+                                Append
+                              </button>
+                              <button className="btn btn-secondary" type="button" onClick={() => handleSuggestionApply(suggestion, 'create_entity')} disabled={busy}>
+                                Accept New
+                              </button>
+                            </>
+                          )}
+                          {suggestion.candidate_kind === 'relationship' && (
+                            <button className="btn btn-secondary" type="button" onClick={() => handleSuggestionApply(suggestion, 'create_relationship')} disabled={busy}>
+                              Add Relation
+                            </button>
+                          )}
+                          {suggestion.candidate_kind === 'timeline_event' && (
+                            <button className="btn btn-secondary" type="button" onClick={() => handleSuggestionApply(suggestion, 'create_timeline_event')} disabled={busy}>
+                              Add Event
+                            </button>
+                          )}
+                          {suggestion.candidate_kind === 'lore_note' && (
+                            <button className="btn btn-secondary" type="button" onClick={() => handleSuggestionApply(suggestion, 'create_lore_note')} disabled={busy}>
+                              Add Note
+                            </button>
+                          )}
+                          <button className="btn btn-danger" type="button" onClick={() => handleSuggestionApply(suggestion, 'discard')} disabled={busy}>
+                            Discard
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              )}
 
             </>
           ) : activeView === 'canon' ? (

@@ -23,6 +23,9 @@ def _base_settings(**overrides: Any) -> Settings:
         openrouter_app_title=None,
         llm_max_tokens=128,
         llm_temperature=0.5,
+        jwt_secret="test-secret",
+        jwt_expires_minutes=60,
+        allow_signup=True,
     )
     return replace(s, **overrides) if overrides else s
 

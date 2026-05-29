@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
@@ -57,6 +58,16 @@ from app.services.consistency import (
 from app.services.entity_types import display_entity_type
 from app.services.markdown_export import build_markdown_export
 
+_current_owner_id: ContextVar[str | None] = ContextVar("world_generator_owner_id", default=None)
+
+
+def set_current_owner_id(owner_id: str) -> Token[str | None]:
+    return _current_owner_id.set(owner_id)
+
+
+def reset_current_owner_id(token: Token[str | None]) -> None:
+    _current_owner_id.reset(token)
+
 
 class WorldLLM(Protocol):
     """Minimal surface used by :class:`WorldService` for generation."""
@@ -84,18 +95,20 @@ class _WorldRecord:
     era_notes: str | None
     seed: str | None
     created_at: datetime
+    owner_id: str | None = None
 
 
 class WorldService:
     def __init__(self, driver: Neo4jDriverLike, llm: WorldLLM | None = None) -> None:
         self._driver = driver
         self._llm = llm
-        self._world_cache: dict[UUID, _WorldRecord] = {}
+        self._world_cache: dict[tuple[UUID, str | None], _WorldRecord] = {}
 
     def initialize_schema(self) -> None:
         """Create lookup constraints used by the service's hot queries."""
         queries = [
             "CREATE CONSTRAINT world_id_unique IF NOT EXISTS FOR (w:World) REQUIRE w.id IS UNIQUE",
+            "CREATE INDEX world_owner_id IF NOT EXISTS FOR (w:World) ON (w.owner_id)",
             "CREATE CONSTRAINT entity_id_unique IF NOT EXISTS FOR (e:Entity) REQUIRE e.id IS UNIQUE",
             "CREATE INDEX entity_world_id IF NOT EXISTS FOR (e:Entity) ON (e.world_id)",
             "CREATE INDEX relationship_world_id IF NOT EXISTS FOR ()-[r:RELATED_TO]-() ON (r.world_id)",
@@ -115,20 +128,23 @@ class WorldService:
                 session.run(query)
 
     def _get_record(self, world_id: UUID) -> _WorldRecord | None:
-        if cached := self._world_cache.get(world_id):
+        owner_id = _current_owner_id.get()
+        cache_key = (world_id, owner_id)
+        if cached := self._world_cache.get(cache_key):
             return cached
         query = """
         MATCH (w)
         WHERE "World" IN labels(w) AND properties(w).id = $id
+          AND ($owner_id IS NULL OR properties(w).owner_id = $owner_id)
         RETURN properties(w) AS props
         """
         with self._driver.session() as session:
-            result = session.run(query, id=str(world_id))
+            result = session.run(query, id=str(world_id), owner_id=owner_id)
             record = result.single()
             if not record:
                 return None
             world = self._world_from_props(record.get("props", record))
-            self._world_cache[world.id] = world
+            self._world_cache[cache_key] = world
             return world
 
     def create(self, data: WorldCreate) -> WorldRead:
@@ -137,16 +153,19 @@ class WorldService:
         query = """
         CREATE (w:World {
             id: $id, title: $title, tone: $tone, 
-            era_notes: $era_notes, seed: $seed, created_at: $created_at
+            era_notes: $era_notes, seed: $seed, created_at: $created_at,
+            owner_id: $owner_id
         })
         """
+        owner_id = _current_owner_id.get()
         with self._driver.session() as session:
             session.run(query, 
                         id=str(wid), 
                         title=data.title, 
                         tone=data.tone,
                         era_notes=data.era_notes, 
-                        seed=data.seed, 
+                        seed=data.seed,
+                        owner_id=owner_id,
                         created_at=now.isoformat())
         
         rec = _WorldRecord(
@@ -156,8 +175,9 @@ class WorldService:
             era_notes=data.era_notes,
             seed=data.seed,
             created_at=now,
+            owner_id=owner_id,
         )
-        self._world_cache[wid] = rec
+        self._world_cache[(wid, owner_id)] = rec
         return self._to_read(rec)
 
     def create_demo_world(self) -> DemoWorldResponse:
@@ -232,16 +252,18 @@ class WorldService:
         query = """
         MATCH (w)
         WHERE "World" IN labels(w)
+          AND ($owner_id IS NULL OR properties(w).owner_id = $owner_id)
         WITH properties(w) AS props
         RETURN props
         ORDER BY props.created_at DESC
         """
+        owner_id = _current_owner_id.get()
         worlds = []
         with self._driver.session() as session:
-            result = session.run(query)
+            result = session.run(query, owner_id=owner_id)
             for record in result:
                 world = self._world_from_props(record.get("props", record))
-                self._world_cache[world.id] = world
+                self._world_cache[(world.id, owner_id)] = world
                 worlds.append(self._to_read(world))
         return worlds
 
@@ -277,7 +299,9 @@ class WorldService:
             result = session.run(delete_world_query, w_id=str(world_id))
             record = result.single()
             if record and record["deleted"]:
-                self._world_cache.pop(world_id, None)
+                for key in list(self._world_cache):
+                    if key[0] == world_id:
+                        self._world_cache.pop(key, None)
             return bool(record and record["deleted"])
 
     def generate_stub(
@@ -2511,6 +2535,7 @@ class WorldService:
             era_notes=str(props["era_notes"]) if props.get("era_notes") is not None else None,
             seed=str(props["seed"]) if props.get("seed") is not None else None,
             created_at=datetime.fromisoformat(str(props["created_at"])),
+            owner_id=str(props["owner_id"]) if props.get("owner_id") is not None else None,
         )
 
     @staticmethod

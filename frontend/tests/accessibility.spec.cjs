@@ -12,6 +12,13 @@ const world = {
   created_at: createdAt,
 };
 
+const user = {
+  id: 'user-1',
+  username: 'test-writer',
+  email: 'writer@example.com',
+  created_at: createdAt,
+};
+
 const entities = [
   {
     id: 'entity-1',
@@ -89,22 +96,96 @@ const timelineEvents = [
 ];
 
 async function mockApi(page) {
+  let mockDrafts = [];
+  let mockSuggestions = suggestions.map((suggestion) => ({ ...suggestion }));
+
   await page.route('http://localhost:8000/api/v1/**', async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname.replace('/api/v1', '');
+    const method = route.request().method();
 
+    if (path === '/auth/me') return route.fulfill({ json: user });
     if (path === '/worlds') return route.fulfill({ json: [world] });
     if (path === `/worlds/${world.id}`) return route.fulfill({ json: world });
     if (path === `/worlds/${world.id}/entities`) return route.fulfill({ json: { entities } });
     if (path === `/worlds/${world.id}/relationships`) return route.fulfill({ json: { relationships } });
     if (path === `/worlds/${world.id}/timeline`) return route.fulfill({ json: { events: timelineEvents } });
-    if (path === `/worlds/${world.id}/suggestions`) return route.fulfill({ json: { suggestions } });
+    if (path === `/worlds/${world.id}/suggestions`) return route.fulfill({ json: { suggestions: mockSuggestions } });
     if (path === `/worlds/${world.id}/graph-views`) return route.fulfill({ json: { views: [] } });
     if (path === `/worlds/${world.id}/planning-boards`) return route.fulfill({ json: { boards: [] } });
     if (path === `/worlds/${world.id}/campaign-sessions`) return route.fulfill({ json: { sessions: [] } });
     if (path === `/worlds/${world.id}/lore-notes`) return route.fulfill({ json: { notes: [] } });
     if (path === `/worlds/${world.id}/faction-clocks`) return route.fulfill({ json: { clocks: [] } });
-    if (path === `/worlds/${world.id}/drafts`) return route.fulfill({ json: { drafts: [] } });
+    if (path === `/worlds/${world.id}/drafts` && method === 'GET') return route.fulfill({ json: { drafts: mockDrafts } });
+    if (path === `/worlds/${world.id}/drafts` && method === 'POST') {
+      const body = route.request().postDataJSON();
+      const draft = {
+        id: `draft-${mockDrafts.length + 1}`,
+        world_id: world.id,
+        title: body.title,
+        body: body.body,
+        status: body.status ?? 'draft',
+        linked_entity_ids: body.linked_entity_ids ?? [],
+        linked_relationship_ids: body.linked_relationship_ids ?? [],
+        linked_timeline_event_ids: body.linked_timeline_event_ids ?? [],
+        check_history: [],
+        created_at: createdAt,
+        updated_at: createdAt,
+      };
+      mockDrafts = [draft, ...mockDrafts];
+      return route.fulfill({ status: 201, json: draft });
+    }
+    const draftMatch = path.match(new RegExp(`^/worlds/${world.id}/drafts/([^/]+)$`));
+    if (draftMatch && method === 'PATCH') {
+      const body = route.request().postDataJSON();
+      const draftId = draftMatch[1];
+      mockDrafts = mockDrafts.map((draft) => (
+        draft.id === draftId ? { ...draft, ...body, updated_at: '2026-01-02T00:00:00.000Z' } : draft
+      ));
+      return route.fulfill({ json: mockDrafts.find((draft) => draft.id === draftId) });
+    }
+    if (draftMatch && method === 'DELETE') {
+      const draftId = draftMatch[1];
+      mockDrafts = mockDrafts.filter((draft) => draft.id !== draftId);
+      return route.fulfill({ status: 204, body: '' });
+    }
+    const checkMatch = path.match(new RegExp(`^/worlds/${world.id}/drafts/([^/]+)/check$`));
+    if (checkMatch && method === 'POST') {
+      const draftId = checkMatch[1];
+      const report = {
+        world_id: world.id,
+        summary: '1 draft issue found.',
+        issues: [{ code: 'entity-reference', severity: 'warning', message: 'Mara needs a clearer canon anchor.', entity_id: 'entity-1' }],
+      };
+      mockDrafts = mockDrafts.map((draft) => (
+        draft.id === draftId
+          ? { ...draft, check_history: [...draft.check_history, { checked_at: '2026-01-03T00:00:00.000Z', summary: report.summary, issues: report.issues }] }
+          : draft
+      ));
+      return route.fulfill({ json: report });
+    }
+    const extractMatch = path.match(new RegExp(`^/worlds/${world.id}/drafts/([^/]+)/extract$`));
+    if (extractMatch && method === 'POST') {
+      const draftId = extractMatch[1];
+      const body = route.request().postDataJSON();
+      const draftSuggestion = {
+        id: 'suggestion-draft-1',
+        world_id: world.id,
+        instruction: body.instruction ?? 'Extract draft canon',
+        content: 'Mara heard the bell under Glass Harbor.',
+        suggested_name: 'Harbor Bell Secret',
+        suggested_type: 'Concept',
+        status: 'pending',
+        created_at: createdAt,
+        candidate_kind: 'entity',
+        source_type: 'draft',
+        source_id: draftId,
+        source_excerpt: body.excerpt,
+        payload: null,
+      };
+      mockSuggestions = [...mockSuggestions, draftSuggestion];
+      return route.fulfill({ json: { world_id: world.id, draft_id: draftId, summary: '1 suggestion queued.', suggestions: [draftSuggestion] } });
+    }
     if (path === '/health') return route.fulfill({ json: { status: 'ok', llm: { mode: 'stub', enabled: false } } });
     if (path === `/worlds/${world.id}/agentic-generate`) return route.fulfill({ json: { content: 'Generated replacement lore for Mara.' } });
     if (path === `/worlds/${world.id}/entities/entity-1`) return route.fulfill({ json: { ...entities[0], description: 'Generated replacement lore for Mara.' } });
@@ -120,6 +201,9 @@ async function checkA11y(page) {
 }
 
 test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('world_generator_access_token', 'test-token');
+  });
   await mockApi(page);
 });
 
@@ -148,6 +232,7 @@ test('core routes have no automated axe violations', async ({ page }) => {
 
 test('keyboard users can reach skip link, tabs, and graph summary selection', async ({ page }) => {
   await page.goto(`/worlds/${world.id}`);
+  await expect(page.getByRole('tab', { name: /Canon/ })).toBeVisible();
 
   await page.keyboard.press('Tab');
   await expect(page.getByRole('link', { name: 'Skip to main content' })).toBeFocused();
@@ -172,6 +257,48 @@ test('workspace modes support keyboard navigation and selected context filters',
   await expect(page.getByText('Showing relationships connected to Mara Vey')).toBeVisible();
   await page.getByRole('checkbox', { name: 'Show all' }).check();
   await expect(page.getByText('Mara Vey protects Glass Harbor')).toBeVisible();
+});
+
+test('draft workspace supports linked canon, checks, extraction, and delete', async ({ page }) => {
+  page.on('dialog', (dialog) => dialog.accept());
+  await page.goto(`/worlds/${world.id}`);
+  await page.getByRole('tab', { name: 'Drafts' }).click();
+  const draftsPanel = page.locator('#drafts-panel');
+
+  await page.getByRole('textbox', { name: 'Draft title' }).fill('Bell Harbor scene');
+  await page.getByLabel('Status').selectOption('revising');
+  await page.getByRole('textbox', { name: 'Draft body' }).fill('Mara heard the bell under Glass Harbor before dawn.');
+  await page.getByLabel('Linked entities').selectOption(['entity-1']);
+  await page.getByLabel('Linked relationships').selectOption(['relationship-1']);
+  await page.getByLabel('Linked timeline').selectOption(['timeline-1']);
+  await page.getByRole('button', { name: 'Save Draft' }).click();
+
+  await expect(page.getByRole('button', { name: /Bell Harbor scene/ })).toBeVisible();
+  await expect(page.getByLabel('Linked canon context')).toContainText('Mara Vey');
+  await expect(page.getByLabel('Linked canon context')).toContainText('Night of Falling Bells');
+
+  await draftsPanel.getByRole('button', { name: 'Check', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Draft Review' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Draft Review' }).locator('xpath=ancestor::section')).toContainText('Mara needs a clearer canon anchor.');
+  await expect(page.getByRole('button', { name: /Bell Harbor scene/ })).toContainText('1 check');
+
+  const draftBody = page.getByRole('textbox', { name: 'Draft body' });
+  await draftBody.focus();
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A');
+  await page.keyboard.press('ArrowLeft');
+  for (let index = 0; index < 15; index += 1) {
+    await page.keyboard.press('Shift+ArrowRight');
+  }
+  await expect(page.getByLabel('Selected excerpt preview')).toContainText('Mara heard the');
+  await page.getByRole('textbox', { name: 'Extraction focus' }).fill('Pull new concepts');
+  await draftsPanel.getByRole('button', { name: 'Extract' }).click();
+
+  await expect(page.getByRole('heading', { name: 'Draft Suggestions' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Draft Suggestions' }).locator('xpath=ancestor::section')).toContainText('Harbor Bell Secret');
+  await expect(page.getByRole('heading', { name: 'Canon Inbox' }).locator('xpath=ancestor::section')).toContainText('draft');
+
+  await draftsPanel.getByRole('button', { name: 'Delete' }).click();
+  await expect(page.getByText('No saved drafts yet.')).toBeVisible();
 });
 
 test('generated lore replace requires explicit confirmation', async ({ page }) => {
