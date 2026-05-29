@@ -137,7 +137,7 @@ const PROMPTS = [
 
 type EntityForm = Pick<Entity, 'name' | 'entity_type' | 'description' | 'structured_fields'>;
 type DraftForm = Pick<DraftPassage, 'title' | 'body' | 'status' | 'linked_entity_ids' | 'linked_relationship_ids' | 'linked_timeline_event_ids'>;
-type WorkspaceView = 'canon' | 'drafts' | 'timeline' | 'planning' | 'campaign' | 'graph';
+type WorkspaceView = 'dashboard' | 'canon' | 'drafts' | 'timeline' | 'planning' | 'campaign' | 'graph';
 
 const blankEntity: EntityForm = {
   name: '',
@@ -193,7 +193,7 @@ const WorldDetail = () => {
   const [revisions, setRevisions] = useState<RevisionVersion[]>([]);
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [selectedRelationshipId, setSelectedRelationshipId] = useState<string | null>(null);
-  const [activeView, setActiveView] = useState<WorkspaceView>('canon');
+  const [activeView, setActiveView] = useState<WorkspaceView>('dashboard');
   const [showAllRelationships, setShowAllRelationships] = useState(false);
   const [showAllTimeline, setShowAllTimeline] = useState(false);
   const [confirmReplaceGenerated, setConfirmReplaceGenerated] = useState(false);
@@ -353,6 +353,59 @@ const WorldDetail = () => {
     [issueStates],
   );
 
+  const openIssueStates = useMemo(
+    () => issueStates.filter((issue) => issue.status === 'open' || issue.status === 'reopened'),
+    [issueStates],
+  );
+
+  const recentDrafts = useMemo(
+    () => drafts
+      .slice()
+      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+      .slice(0, 3),
+    [drafts],
+  );
+
+  const recentTimelineEvents = useMemo(
+    () => timelineEvents
+      .slice()
+      .sort((a, b) => b.event_order - a.event_order)
+      .slice(0, 3),
+    [timelineEvents],
+  );
+
+  const recentCampaignSessions = useMemo(
+    () => campaignSessions
+      .slice()
+      .sort((a, b) => b.session_number - a.session_number)
+      .slice(0, 3),
+    [campaignSessions],
+  );
+
+  const recentLoreNotes = useMemo(
+    () => loreNotes
+      .slice()
+      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+      .slice(0, 3),
+    [loreNotes],
+  );
+
+  const activeFactionClocks = useMemo(
+    () => factionClocks
+      .filter((clock) => clock.status === 'active' || clock.status === 'paused')
+      .sort((a, b) => (b.filled_segments / b.segments) - (a.filled_segments / a.segments))
+      .slice(0, 3),
+    [factionClocks],
+  );
+
+  const nextPlanningCards = useMemo(
+    () => planningBoards
+      .flatMap((board) => board.cards.map((card) => ({ ...card, boardName: board.name })))
+      .sort((a, b) => a.position - b.position)
+      .slice(0, 4),
+    [planningBoards],
+  );
+
   const templateFields = useMemo(
     () => TEMPLATE_FIELDS[displayType(entityForm.entity_type)] ?? TEMPLATE_FIELDS.Other,
     [entityForm.entity_type],
@@ -441,7 +494,7 @@ const WorldDetail = () => {
 
   const loadWorkspace = async (worldId: string) => {
     setErrorMessage('');
-    const [worldData, entityData, relationshipData, suggestionData, timelineData, graphViewData, boardData, sessionData, noteData, clockData, draftData, healthData] = await Promise.all([
+    const [worldData, entityData, relationshipData, suggestionData, timelineData, graphViewData, boardData, sessionData, noteData, clockData, draftData, issueData, healthData] = await Promise.all([
       fetchWorld(worldId),
       fetchEntities(worldId),
       fetchRelationships(worldId),
@@ -453,6 +506,7 @@ const WorldDetail = () => {
       fetchLoreNotes(worldId).catch(() => []),
       fetchFactionClocks(worldId).catch(() => []),
       fetchDrafts(worldId).catch(() => []),
+      fetchConsistencyIssues(worldId).catch(() => []),
       fetchHealth().catch(() => null),
     ]);
     setWorld(worldData);
@@ -466,6 +520,7 @@ const WorldDetail = () => {
     setLoreNotes(noteData);
     setFactionClocks(clockData);
     setDrafts(draftData);
+    setIssueStates(issueData);
     const nextDraft = draftData[0] ?? null;
     setSelectedDraftId((current) => current ?? nextDraft?.id ?? null);
     if (nextDraft) {
@@ -1136,6 +1191,21 @@ const WorldDetail = () => {
     }
   };
 
+  const handleIssueStateSelect = (issue: ConsistencyIssueState) => {
+    setActiveView('canon');
+    if (issue.entity_id) {
+      selectEntity(issue.entity_id);
+      return;
+    }
+    if (issue.relationship_id) {
+      const relationship = relationships.find((item) => item.id === issue.relationship_id);
+      if (relationship) {
+        selectEntity(relationship.source_entity_id);
+      }
+      setSelectedRelationshipId(issue.relationship_id);
+    }
+  };
+
   const handleResetGraph = () => {
     setGraphPositions({});
     setGraphLayoutMode('manual');
@@ -1681,6 +1751,18 @@ const WorldDetail = () => {
         <div className="editor-stack">
           <div className="workspace-tabs glass" role="tablist" aria-label="Workspace views">
             <button
+              className={activeView === 'dashboard' ? 'active' : ''}
+              onClick={() => setActiveView('dashboard')}
+              type="button"
+              role="tab"
+              aria-selected={activeView === 'dashboard'}
+              aria-controls="dashboard-panel"
+              id="dashboard-tab"
+            >
+              <Activity size={16} />
+              Dashboard
+            </button>
+            <button
               className={activeView === 'canon' ? 'active' : ''}
               onClick={() => setActiveView('canon')}
               type="button"
@@ -1754,7 +1836,189 @@ const WorldDetail = () => {
             </button>
           </div>
 
-          {activeView === 'drafts' ? (
+          {activeView === 'dashboard' ? (
+            <section className="glass content-section dashboard-panel" id="dashboard-panel" role="tabpanel" aria-labelledby="dashboard-tab">
+              <div className="section-header">
+                <Activity className="text-primary" />
+                <h2>World Dashboard</h2>
+                <span className="review-badge">{pendingSuggestions.length + openIssueStates.length} review items</span>
+              </div>
+
+              <div className="dashboard-stats" aria-label="World workspace summary">
+                <button className="dashboard-stat" type="button" onClick={() => setActiveView('canon')}>
+                  <span>{openIssueStates.length}</span>
+                  <strong>Open issues</strong>
+                </button>
+                <button className="dashboard-stat" type="button" onClick={() => setActiveView('drafts')}>
+                  <span>{drafts.length}</span>
+                  <strong>Drafts</strong>
+                </button>
+                <button className="dashboard-stat" type="button" onClick={() => setActiveView('timeline')}>
+                  <span>{timelineEvents.length}</span>
+                  <strong>Timeline</strong>
+                </button>
+                <button className="dashboard-stat" type="button" onClick={() => setActiveView('planning')}>
+                  <span>{nextPlanningCards.length}</span>
+                  <strong>Planning cards</strong>
+                </button>
+              </div>
+
+              <div className="dashboard-grid">
+                <article className="dashboard-card">
+                  <div className="dashboard-card-header">
+                    <ClipboardCheck size={18} />
+                    <h3>Canon Review</h3>
+                    <button className="btn btn-secondary compact-button" type="button" onClick={handleConsistencyReport} disabled={busy}>
+                      Run Report
+                    </button>
+                  </div>
+                  {openIssueStates.length === 0 ? (
+                    <p className="text-muted">No persisted open issues. Run a report to refresh canon health.</p>
+                  ) : (
+                    <div className="dashboard-list">
+                      {openIssueStates.slice(0, 3).map((issue) => (
+                        <button className="dashboard-list-item" key={issue.id} type="button" onClick={() => handleIssueStateSelect(issue)}>
+                          <span>{issue.severity}</span>
+                          <strong>{issue.message}</strong>
+                          <small>{issue.code.replaceAll('_', ' ')} · {formatDateTime(issue.last_seen)}</small>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </article>
+
+                <article className="dashboard-card">
+                  <div className="dashboard-card-header">
+                    <Sparkles size={18} />
+                    <h3>Suggestion Inbox</h3>
+                    <span className="dashboard-count">{pendingSuggestions.length}</span>
+                  </div>
+                  {pendingSuggestions.length === 0 ? (
+                    <p className="text-muted">No pending suggestions.</p>
+                  ) : (
+                    <div className="dashboard-list">
+                      {pendingSuggestions.slice(0, 3).map((suggestion) => (
+                        <button className="dashboard-list-item" key={suggestion.id} type="button" onClick={() => setActiveView(suggestion.source_type === 'draft' ? 'drafts' : 'canon')}>
+                          <span>{(suggestion.candidate_kind ?? 'entity').replace('_', ' ')}</span>
+                          <strong>{suggestion.suggested_name || 'Generated lore'}</strong>
+                          <small>{suggestion.source_type ?? 'generation'} · {formatDateTime(suggestion.created_at)}</small>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </article>
+
+                <article className="dashboard-card">
+                  <div className="dashboard-card-header">
+                    <FileText size={18} />
+                    <h3>Recent Drafts</h3>
+                    <button className="btn btn-secondary compact-button" type="button" onClick={() => setActiveView('drafts')}>
+                      Open
+                    </button>
+                  </div>
+                  {recentDrafts.length === 0 ? (
+                    <p className="text-muted">No saved drafts yet.</p>
+                  ) : (
+                    <div className="dashboard-list">
+                      {recentDrafts.map((draft) => (
+                        <button className="dashboard-list-item" key={draft.id} type="button" onClick={() => {
+                          handleDraftSelect(draft.id);
+                          setActiveView('drafts');
+                        }}>
+                          <span>{draft.status}</span>
+                          <strong>{draft.title}</strong>
+                          <small>{draft.check_history.length} check{draft.check_history.length === 1 ? '' : 's'} · {formatDateTime(draft.updated_at)}</small>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </article>
+
+                <article className="dashboard-card">
+                  <div className="dashboard-card-header">
+                    <Clock size={18} />
+                    <h3>Timeline Changes</h3>
+                    <button className="btn btn-secondary compact-button" type="button" onClick={() => setActiveView('timeline')}>
+                      Open
+                    </button>
+                  </div>
+                  {recentTimelineEvents.length === 0 ? (
+                    <p className="text-muted">No timeline events yet.</p>
+                  ) : (
+                    <div className="dashboard-list">
+                      {recentTimelineEvents.map((event) => (
+                        <button className="dashboard-list-item" key={event.id} type="button" onClick={() => setActiveView('timeline')}>
+                          <span>#{event.event_order}</span>
+                          <strong>{event.title}</strong>
+                          <small>{[event.era_label, event.date_label].filter(Boolean).join(' / ') || `${event.participants.length} linked participant${event.participants.length === 1 ? '' : 's'}`}</small>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </article>
+
+                <article className="dashboard-card">
+                  <div className="dashboard-card-header">
+                    <ClipboardCheck size={18} />
+                    <h3>Next Planning Cards</h3>
+                    <button className="btn btn-secondary compact-button" type="button" onClick={() => setActiveView('planning')}>
+                      Open
+                    </button>
+                  </div>
+                  {nextPlanningCards.length === 0 ? (
+                    <p className="text-muted">No planning cards yet.</p>
+                  ) : (
+                    <div className="dashboard-list">
+                      {nextPlanningCards.map((card) => (
+                        <button className="dashboard-list-item" key={card.id} type="button" onClick={() => setActiveView('planning')}>
+                          <span>{card.lane}</span>
+                          <strong>{card.title}</strong>
+                          <small>{card.boardName}</small>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </article>
+
+                <article className="dashboard-card">
+                  <div className="dashboard-card-header">
+                    <Flag size={18} />
+                    <h3>Campaign Notes</h3>
+                    <button className="btn btn-secondary compact-button" type="button" onClick={() => setActiveView('campaign')}>
+                      Open
+                    </button>
+                  </div>
+                  {recentCampaignSessions.length === 0 && recentLoreNotes.length === 0 && activeFactionClocks.length === 0 ? (
+                    <p className="text-muted">No campaign sessions, notes, or active clocks yet.</p>
+                  ) : (
+                    <div className="dashboard-list">
+                      {recentCampaignSessions.map((session) => (
+                        <button className="dashboard-list-item" key={session.id} type="button" onClick={() => setActiveView('campaign')}>
+                          <span>Session {session.session_number}</span>
+                          <strong>{session.title}</strong>
+                          <small>{session.updated_at ? formatDateTime(session.updated_at) : 'Campaign session'}</small>
+                        </button>
+                      ))}
+                      {recentLoreNotes.map((note) => (
+                        <button className="dashboard-list-item" key={note.id} type="button" onClick={() => setActiveView('campaign')}>
+                          <span>{note.visibility.replace('_', ' ')}</span>
+                          <strong>{note.title}</strong>
+                          <small>{formatDateTime(note.updated_at)}</small>
+                        </button>
+                      ))}
+                      {activeFactionClocks.map((clock) => (
+                        <button className="dashboard-list-item" key={clock.id} type="button" onClick={() => setActiveView('campaign')}>
+                          <span>{clock.status}</span>
+                          <strong>{clock.title}</strong>
+                          <small>{clock.filled_segments}/{clock.segments} segments</small>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </article>
+              </div>
+            </section>
+          ) : activeView === 'drafts' ? (
             <>
               <section className="glass content-section" id="drafts-panel" role="tabpanel" aria-labelledby="drafts-tab">
                 <div className="section-header">

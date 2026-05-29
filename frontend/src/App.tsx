@@ -99,12 +99,11 @@ function AuthGate({ onAuthenticated }: { onAuthenticated: (user: User) => void }
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [checkingAuth, setCheckingAuth] = useState(() => Boolean(localStorage.getItem(AUTH_TOKEN_KEY)));
 
   useEffect(() => {
     const token = localStorage.getItem(AUTH_TOKEN_KEY);
     if (!token) {
-      setCheckingAuth(false);
       return;
     }
     fetchMe()

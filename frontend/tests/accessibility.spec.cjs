@@ -78,6 +78,25 @@ const suggestions = [
   },
 ];
 
+const consistencyIssues = [
+  {
+    id: 'issue-1',
+    world_id: world.id,
+    fingerprint: 'missing-description:entity-1',
+    code: 'thin_lore',
+    severity: 'warning',
+    message: 'Mara Vey needs more canon detail.',
+    target_type: 'entity',
+    entity_id: 'entity-1',
+    relationship_id: null,
+    status: 'open',
+    note: null,
+    first_seen: createdAt,
+    last_seen: createdAt,
+    updated_at: createdAt,
+  },
+];
+
 const timelineEvents = [
   {
     id: 'timeline-1',
@@ -111,6 +130,7 @@ async function mockApi(page) {
     if (path === `/worlds/${world.id}/relationships`) return route.fulfill({ json: { relationships } });
     if (path === `/worlds/${world.id}/timeline`) return route.fulfill({ json: { events: timelineEvents } });
     if (path === `/worlds/${world.id}/suggestions`) return route.fulfill({ json: { suggestions: mockSuggestions } });
+    if (path === `/worlds/${world.id}/consistency/issues`) return route.fulfill({ json: { issues: consistencyIssues } });
     if (path === `/worlds/${world.id}/graph-views`) return route.fulfill({ json: { views: [] } });
     if (path === `/worlds/${world.id}/planning-boards`) return route.fulfill({ json: { boards: [] } });
     if (path === `/worlds/${world.id}/campaign-sessions`) return route.fulfill({ json: { sessions: [] } });
@@ -232,6 +252,7 @@ test('core routes have no automated axe violations', async ({ page }) => {
 
 test('keyboard users can reach skip link, tabs, and graph summary selection', async ({ page }) => {
   await page.goto(`/worlds/${world.id}`);
+  await expect(page.getByRole('tab', { name: /Dashboard/ })).toBeVisible();
   await expect(page.getByRole('tab', { name: /Canon/ })).toBeVisible();
 
   await page.keyboard.press('Tab');
@@ -248,7 +269,7 @@ test('keyboard users can reach skip link, tabs, and graph summary selection', as
 
 test('workspace modes support keyboard navigation and selected context filters', async ({ page }) => {
   await page.goto(`/worlds/${world.id}`);
-  for (const tab of ['Canon', 'Drafts', 'Timeline', 'Planning', 'Graph', 'Campaign']) {
+  for (const tab of ['Dashboard', 'Canon', 'Drafts', 'Timeline', 'Planning', 'Graph', 'Campaign']) {
     await page.getByRole('tab', { name: tab }).focus();
     await page.keyboard.press('Enter');
     await expect(page.getByRole('tab', { name: tab })).toHaveAttribute('aria-selected', 'true');
@@ -257,6 +278,16 @@ test('workspace modes support keyboard navigation and selected context filters',
   await expect(page.getByText('Showing relationships connected to Mara Vey')).toBeVisible();
   await page.getByRole('checkbox', { name: 'Show all' }).check();
   await expect(page.getByText('Mara Vey protects Glass Harbor')).toBeVisible();
+});
+
+test('world dashboard links into review and writing workflows', async ({ page }) => {
+  await page.goto(`/worlds/${world.id}`);
+  await expect(page.getByRole('heading', { name: 'World Dashboard' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Open issues/ })).toContainText('1');
+  await expect(page.getByRole('button', { name: /Bell Cipher/ })).toBeVisible();
+  await page.getByRole('button', { name: /Mara Vey needs more canon detail/ }).click();
+  await expect(page.getByRole('tab', { name: 'Canon' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('textbox', { name: 'Entity name' })).toHaveValue('Mara Vey');
 });
 
 test('draft workspace supports linked canon, checks, extraction, and delete', async ({ page }) => {
