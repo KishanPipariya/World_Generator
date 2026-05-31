@@ -468,7 +468,9 @@
 .draft-context-panel,
 .excerpt-preview,
 .draft-review,
-.draft-history {
+.draft-history,
+.draft-candidate-review,
+.draft-candidate-list {
   display: grid;
   gap: 0.65rem;
 }
@@ -514,7 +516,9 @@
 }
 
 .draft-check-summary,
-.draft-history-item {
+.draft-history-item,
+.draft-candidate-item,
+.draft-delta-summary {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   background: rgba(255, 255, 255, 0.04);
@@ -541,6 +545,28 @@
   grid-column: 1 / -1;
   margin: 0;
   color: var(--text-secondary);
+}
+
+.draft-candidate-item {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.draft-delta-summary {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.25rem 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.draft-delta-summary p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.payload-editor {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
 .compact-lore {

@@ -1212,6 +1212,63 @@ def test_draft_extract_fallback_creates_pending_suggestions_and_applies_new_kind
     assert applied_event.json()["timeline_event"]["title"]
 
 
+def test_draft_extract_preview_returns_candidates_without_creating_suggestions(client: TestClient) -> None:
+    world = client.post("/worlds", json={"title": "Preview Desk"}).json()
+    excerpt = "During the ash season, Mira Voss carried the blue writ."
+    draft = client.post(
+        f"/worlds/{world['id']}/drafts",
+        json={"title": "Marked Scene", "body": f"Opening.\n{excerpt}\nClosing."},
+    ).json()
+
+    preview = client.post(
+        f"/worlds/{world['id']}/drafts/{draft['id']}/extract/preview",
+        json={"excerpt": excerpt, "max_candidates": 6},
+    )
+
+    assert preview.status_code == 200
+    body = preview.json()
+    assert body["excerpt"] == excerpt
+    assert body["candidates"]
+    assert client.get(f"/worlds/{world['id']}/suggestions").json()["suggestions"] == []
+
+
+def test_draft_extract_queue_creates_suggestions_from_edited_candidates(client: TestClient) -> None:
+    world = client.post("/worlds", json={"title": "Queue Desk"}).json()
+    excerpt = "The blue writ opens sealed roads."
+    draft = client.post(
+        f"/worlds/{world['id']}/drafts",
+        json={"title": "Scene", "body": excerpt},
+    ).json()
+
+    queued = client.post(
+        f"/worlds/{world['id']}/drafts/{draft['id']}/extract/queue",
+        json={
+            "excerpt": excerpt,
+            "instruction": "Queue edited lore",
+            "candidates": [
+                {
+                    "candidate_kind": "lore_note",
+                    "suggested_name": "Edited Blue Writ",
+                    "suggested_type": "artifact_lore",
+                    "content": "Edited content for sealed roads.",
+                    "payload": {"title": "Edited payload title", "body": "Payload body"},
+                }
+            ],
+        },
+    )
+
+    assert queued.status_code == 200
+    suggestion = queued.json()["suggestions"][0]
+    assert suggestion["candidate_kind"] == "lore_note"
+    assert suggestion["source_type"] == "draft"
+    assert suggestion["source_id"] == draft["id"]
+    assert suggestion["source_excerpt"] == excerpt
+    assert suggestion["suggested_name"] == "Edited Blue Writ"
+    assert suggestion["suggested_type"] == "artifact_lore"
+    assert suggestion["content"] == "Edited content for sealed roads."
+    assert suggestion["payload"] == {"title": "Edited payload title", "body": "Payload body"}
+
+
 def test_draft_extract_rejects_excerpt_not_in_saved_body(client: TestClient) -> None:
     world = client.post("/worlds", json={"title": "Extraction Errors"}).json()
     draft = client.post(
@@ -1230,6 +1287,56 @@ def test_draft_extract_rejects_excerpt_not_in_saved_body(client: TestClient) -> 
         json={"excerpt": "Only this text is saved."},
     )
     assert unknown.status_code == 404
+
+
+def test_draft_extract_preview_and_queue_reject_invalid_requests(client: TestClient) -> None:
+    world = client.post("/worlds", json={"title": "Extraction Errors"}).json()
+    draft = client.post(
+        f"/worlds/{world['id']}/drafts",
+        json={"title": "Scene", "body": "Only this text is saved."},
+    ).json()
+
+    preview_missing = client.post(
+        f"/worlds/{world['id']}/drafts/{draft['id']}/extract/preview",
+        json={"excerpt": "Unsaved text"},
+    )
+    assert preview_missing.status_code == 400
+
+    queue_missing = client.post(
+        f"/worlds/{world['id']}/drafts/{draft['id']}/extract/queue",
+        json={
+            "excerpt": "Unsaved text",
+            "candidates": [
+                {
+                    "candidate_kind": "entity",
+                    "suggested_name": "Only",
+                    "content": "Only this text is saved.",
+                }
+            ],
+        },
+    )
+    assert queue_missing.status_code == 400
+
+    empty_candidates = client.post(
+        f"/worlds/{world['id']}/drafts/{draft['id']}/extract/queue",
+        json={"excerpt": "Only this text is saved.", "candidates": []},
+    )
+    assert empty_candidates.status_code == 422
+
+    invalid_kind = client.post(
+        f"/worlds/{world['id']}/drafts/{draft['id']}/extract/queue",
+        json={
+            "excerpt": "Only this text is saved.",
+            "candidates": [
+                {
+                    "candidate_kind": "place",
+                    "suggested_name": "Only",
+                    "content": "Only this text is saved.",
+                }
+            ],
+        },
+    )
+    assert invalid_kind.status_code == 422
 
 
 def test_draft_extract_accepts_valid_llm_json(client: TestClient) -> None:

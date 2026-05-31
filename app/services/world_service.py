@@ -19,6 +19,8 @@ from app.schemas.world import (
     DemoWorldResponse,
     DraftCheckHistoryItem,
     DraftCreate,
+    DraftExtractionCandidate,
+    DraftExtractionPreviewResponse,
     DraftExtractionResponse,
     DraftRead,
     DraftUpdate,
@@ -1725,26 +1727,133 @@ class WorldService:
         instruction: str | None = None,
         max_candidates: int = 6,
     ) -> DraftExtractionResponse | None:
-        draft = self.get_draft(world_id, draft_id)
+        preview = self.preview_draft_extraction(
+            world_id=world_id,
+            draft_id=draft_id,
+            excerpt=excerpt,
+            instruction=instruction,
+            max_candidates=max_candidates,
+        )
+        if not preview:
+            return None
+        return self.queue_draft_extraction(
+            world_id=world_id,
+            draft_id=draft_id,
+            excerpt=preview.excerpt,
+            instruction=instruction,
+            candidates=preview.candidates,
+        )
+
+    def preview_draft_extraction(
+        self,
+        world_id: UUID,
+        draft_id: UUID,
+        excerpt: str,
+        instruction: str | None = None,
+        max_candidates: int = 6,
+    ) -> DraftExtractionPreviewResponse | None:
+        draft, excerpt = self._validated_draft_excerpt(world_id, draft_id, excerpt)
         if not draft:
             return None
-        excerpt = excerpt.strip()
-        if not excerpt:
-            raise ValueError("Excerpt is required")
-        if excerpt not in draft.body:
-            raise ValueError("Excerpt must be selected from the saved draft body")
+        candidates = self._generate_draft_candidates(
+            world_id=world_id,
+            draft_title=draft.title,
+            excerpt=excerpt,
+            instruction=instruction,
+            max_candidates=max_candidates,
+        )
+        summary = (
+            f"Found {len(candidates)} canon candidate(s) from selected draft excerpt."
+            if candidates
+            else "No canon candidates could be extracted from the selected excerpt."
+        )
+        return DraftExtractionPreviewResponse(
+            world_id=world_id,
+            draft_id=draft_id,
+            summary=summary,
+            excerpt=excerpt,
+            candidates=[DraftExtractionCandidate(**candidate) for candidate in candidates],
+        )
 
+    def queue_draft_extraction(
+        self,
+        world_id: UUID,
+        draft_id: UUID,
+        excerpt: str,
+        instruction: str | None,
+        candidates: list[DraftExtractionCandidate],
+    ) -> DraftExtractionResponse | None:
+        draft, excerpt = self._validated_draft_excerpt(world_id, draft_id, excerpt)
+        if not draft:
+            return None
+        normalized_candidates = [
+            normalized
+            for candidate in candidates
+            if (normalized := self._normalize_draft_candidate(candidate.model_dump()))
+        ]
+        if not normalized_candidates:
+            raise ValueError("At least one valid extraction candidate is required")
+        suggestions = self._queue_draft_candidates(
+            world_id=world_id,
+            draft_id=draft_id,
+            draft_title=draft.title,
+            excerpt=excerpt,
+            instruction=instruction,
+            candidates=normalized_candidates,
+        )
+        summary = (
+            f"Queued {len(suggestions)} canon suggestion(s) from selected draft excerpt."
+            if suggestions
+            else "No canon suggestions could be extracted from the selected excerpt."
+        )
+        return DraftExtractionResponse(
+            world_id=world_id,
+            draft_id=draft_id,
+            summary=summary,
+            suggestions=suggestions,
+        )
+
+    def _validated_draft_excerpt(
+        self, world_id: UUID, draft_id: UUID, excerpt: str
+    ) -> tuple[DraftRead | None, str]:
+        draft = self.get_draft(world_id, draft_id)
+        if not draft:
+            return None, ""
+        clean_excerpt = excerpt.strip()
+        if not clean_excerpt:
+            raise ValueError("Excerpt is required")
+        if clean_excerpt not in draft.body:
+            raise ValueError("Excerpt must be selected from the saved draft body")
+        return draft, clean_excerpt
+
+    def _generate_draft_candidates(
+        self,
+        world_id: UUID,
+        draft_title: str,
+        excerpt: str,
+        instruction: str | None,
+        max_candidates: int,
+    ) -> list[dict[str, object]]:
         candidates = self._llm_extract_draft_candidates(
-            world_id, draft.title, excerpt, instruction, max_candidates
+            world_id, draft_title, excerpt, instruction, max_candidates
         )
         if not candidates:
             candidates = self._fallback_extract_draft_candidates(world_id, excerpt)
-        candidates = self._dedupe_draft_candidates(candidates)[:max_candidates]
+        return self._dedupe_draft_candidates(candidates)[:max_candidates]
 
-        suggestions = [
+    def _queue_draft_candidates(
+        self,
+        world_id: UUID,
+        draft_id: UUID,
+        draft_title: str,
+        excerpt: str,
+        instruction: str | None,
+        candidates: list[dict[str, object]],
+    ) -> list[GenerationSuggestionRead]:
+        return [
             self.create_generation_suggestion(
                 world_id=world_id,
-                instruction=instruction or f"Extract canon candidate from draft: {draft.title}",
+                instruction=instruction or f"Extract canon candidate from draft: {draft_title}",
                 content=str(candidate["content"]),
                 suggested_name=str(candidate["suggested_name"]),
                 suggested_type=str(candidate.get("suggested_type") or candidate["candidate_kind"]),
@@ -1760,17 +1869,6 @@ class WorldService:
             )
             for candidate in candidates
         ]
-        summary = (
-            f"Queued {len(suggestions)} canon suggestion(s) from selected draft excerpt."
-            if suggestions
-            else "No canon suggestions could be extracted from the selected excerpt."
-        )
-        return DraftExtractionResponse(
-            world_id=world_id,
-            draft_id=draft_id,
-            summary=summary,
-            suggestions=suggestions,
-        )
 
     def create_draft(self, world_id: UUID, data: DraftCreate) -> DraftRead:
         if not self._get_record(world_id):

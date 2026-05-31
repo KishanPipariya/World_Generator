@@ -283,6 +283,31 @@ export interface DraftPassage {
   updated_at: string;
 }
 
+export type DraftExtractionCandidateKind = 'entity' | 'relationship' | 'timeline_event' | 'lore_note';
+
+export interface DraftExtractionCandidate {
+  candidate_kind: DraftExtractionCandidateKind;
+  suggested_name: string;
+  suggested_type: string | null;
+  content: string;
+  payload: Record<string, unknown>;
+}
+
+export interface DraftExtractionPreview {
+  world_id: string;
+  draft_id: string;
+  summary: string;
+  excerpt: string;
+  candidates: DraftExtractionCandidate[];
+}
+
+export interface DraftExtractionResult {
+  world_id: string;
+  draft_id: string;
+  summary: string;
+  suggestions: GenerationSuggestion[];
+}
+
 export interface HealthStatus {
   status: string;
 }
@@ -608,8 +633,26 @@ export const extractDraftExcerpt = async (
   worldId: string,
   draftId: string,
   payload: { excerpt: string; instruction?: string; max_candidates?: number },
-): Promise<{ world_id: string; draft_id: string; summary: string; suggestions: GenerationSuggestion[] }> => {
+): Promise<DraftExtractionResult> => {
   const response = await api.post(`/worlds/${worldId}/drafts/${draftId}/extract`, payload);
+  return response.data;
+};
+
+export const previewDraftExtraction = async (
+  worldId: string,
+  draftId: string,
+  payload: { excerpt: string; instruction?: string; max_candidates?: number },
+): Promise<DraftExtractionPreview> => {
+  const response = await api.post(`/worlds/${worldId}/drafts/${draftId}/extract/preview`, payload);
+  return response.data;
+};
+
+export const queueDraftExtraction = async (
+  worldId: string,
+  draftId: string,
+  payload: { excerpt: string; instruction?: string; candidates: DraftExtractionCandidate[] },
+): Promise<DraftExtractionResult> => {
+  const response = await api.post(`/worlds/${worldId}/drafts/${draftId}/extract/queue`, payload);
   return response.data;
 };
 

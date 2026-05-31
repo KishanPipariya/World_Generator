@@ -545,6 +545,28 @@ class DraftExtractionRequest(BaseModel):
     max_candidates: int = Field(default=6, ge=1, le=12)
 
 
+class DraftExtractionCandidate(BaseModel):
+    candidate_kind: Literal["entity", "relationship", "timeline_event", "lore_note"]
+    suggested_name: str = Field(..., min_length=1, max_length=200)
+    suggested_type: str | None = Field(default=None, max_length=100)
+    content: str = Field(..., min_length=1, max_length=20000)
+    payload: dict[str, object] = Field(default_factory=dict)
+
+
+class DraftExtractionPreviewResponse(BaseModel):
+    world_id: UUID
+    draft_id: UUID
+    summary: str
+    excerpt: str
+    candidates: list[DraftExtractionCandidate]
+
+
+class DraftExtractionQueueRequest(BaseModel):
+    excerpt: str = Field(..., min_length=1, max_length=20000)
+    instruction: str | None = Field(default=None, max_length=2000)
+    candidates: list[DraftExtractionCandidate] = Field(..., min_length=1)
+
+
 class DraftExtractionResponse(BaseModel):
     world_id: UUID
     draft_id: UUID

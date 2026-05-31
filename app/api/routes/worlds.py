@@ -18,6 +18,8 @@ from app.schemas.world import (
     ConsistencyReportResponse,
     DemoWorldResponse,
     DraftCreate,
+    DraftExtractionPreviewResponse,
+    DraftExtractionQueueRequest,
     DraftExtractionRequest,
     DraftExtractionResponse,
     DraftListResponse,
@@ -794,6 +796,52 @@ def extract_draft_excerpt(
             excerpt=body.excerpt,
             instruction=body.instruction,
             max_candidates=body.max_candidates,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if not result:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Draft not found")
+    return result
+
+
+@router.post("/{world_id}/drafts/{draft_id}/extract/preview", response_model=DraftExtractionPreviewResponse)
+def preview_draft_extraction(
+    world_id: UUID,
+    draft_id: UUID,
+    body: DraftExtractionRequest,
+    _rate_limited: object = Depends(check_generation_rate_limit),
+    svc: WorldService = Depends(get_world_service),
+) -> DraftExtractionPreviewResponse:
+    try:
+        result = svc.preview_draft_extraction(
+            world_id=world_id,
+            draft_id=draft_id,
+            excerpt=body.excerpt,
+            instruction=body.instruction,
+            max_candidates=body.max_candidates,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if not result:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Draft not found")
+    return result
+
+
+@router.post("/{world_id}/drafts/{draft_id}/extract/queue", response_model=DraftExtractionResponse)
+def queue_draft_extraction(
+    world_id: UUID,
+    draft_id: UUID,
+    body: DraftExtractionQueueRequest,
+    _rate_limited: object = Depends(check_generation_rate_limit),
+    svc: WorldService = Depends(get_world_service),
+) -> DraftExtractionResponse:
+    try:
+        result = svc.queue_draft_extraction(
+            world_id=world_id,
+            draft_id=draft_id,
+            excerpt=body.excerpt,
+            instruction=body.instruction,
+            candidates=body.candidates,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))

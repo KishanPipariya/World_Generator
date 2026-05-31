@@ -184,24 +184,45 @@ async function mockApi(page) {
       ));
       return route.fulfill({ json: report });
     }
-    const extractMatch = path.match(new RegExp(`^/worlds/${world.id}/drafts/([^/]+)/extract$`));
-    if (extractMatch && method === 'POST') {
-      const draftId = extractMatch[1];
+    const previewMatch = path.match(new RegExp(`^/worlds/${world.id}/drafts/([^/]+)/extract/preview$`));
+    if (previewMatch && method === 'POST') {
+      const draftId = previewMatch[1];
       const body = route.request().postDataJSON();
+      return route.fulfill({
+        json: {
+          world_id: world.id,
+          draft_id: draftId,
+          summary: '1 candidate found.',
+          excerpt: body.excerpt,
+          candidates: [{
+            candidate_kind: 'entity',
+            suggested_name: 'Harbor Bell Secret',
+            suggested_type: 'Concept',
+            content: 'Mara heard the bell under Glass Harbor.',
+            payload: { name: 'Harbor Bell Secret' },
+          }],
+        },
+      });
+    }
+    const queueMatch = path.match(new RegExp(`^/worlds/${world.id}/drafts/([^/]+)/extract/queue$`));
+    if (queueMatch && method === 'POST') {
+      const draftId = queueMatch[1];
+      const body = route.request().postDataJSON();
+      const candidate = body.candidates[0];
       const draftSuggestion = {
         id: 'suggestion-draft-1',
         world_id: world.id,
         instruction: body.instruction ?? 'Extract draft canon',
-        content: 'Mara heard the bell under Glass Harbor.',
-        suggested_name: 'Harbor Bell Secret',
-        suggested_type: 'Concept',
+        content: candidate.content,
+        suggested_name: candidate.suggested_name,
+        suggested_type: candidate.suggested_type,
         status: 'pending',
         created_at: createdAt,
-        candidate_kind: 'entity',
+        candidate_kind: candidate.candidate_kind,
         source_type: 'draft',
         source_id: draftId,
         source_excerpt: body.excerpt,
-        payload: null,
+        payload: candidate.payload,
       };
       mockSuggestions = [...mockSuggestions, draftSuggestion];
       return route.fulfill({ json: { world_id: world.id, draft_id: draftId, summary: '1 suggestion queued.', suggestions: [draftSuggestion] } });
@@ -322,10 +343,15 @@ test('draft workspace supports linked canon, checks, extraction, and delete', as
   }
   await expect(page.getByLabel('Selected excerpt preview')).toContainText('Mara heard the');
   await page.getByRole('textbox', { name: 'Extraction focus' }).fill('Pull new concepts');
-  await draftsPanel.getByRole('button', { name: 'Extract' }).click();
+  await draftsPanel.getByRole('button', { name: 'Preview Extraction' }).click();
+
+  await expect(page.getByLabel('Extraction candidate review')).toContainText('Harbor Bell Secret');
+  await expect(page.getByRole('heading', { name: 'Canon Inbox' }).locator('xpath=ancestor::section')).not.toContainText('Harbor Bell Secret');
+  await page.getByLabel('Extraction candidate review').getByRole('textbox', { name: 'Name', exact: true }).fill('Edited Harbor Bell');
+  await page.getByRole('button', { name: 'Queue All' }).click();
 
   await expect(page.getByRole('heading', { name: 'Draft Suggestions' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Draft Suggestions' }).locator('xpath=ancestor::section')).toContainText('Harbor Bell Secret');
+  await expect(page.getByRole('heading', { name: 'Draft Suggestions' }).locator('xpath=ancestor::section')).toContainText('Edited Harbor Bell');
   await expect(page.getByRole('heading', { name: 'Canon Inbox' }).locator('xpath=ancestor::section')).toContainText('draft');
 
   await draftsPanel.getByRole('button', { name: 'Delete' }).click();

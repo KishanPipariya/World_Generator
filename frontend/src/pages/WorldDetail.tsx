@@ -42,7 +42,6 @@ import {
   deleteWorld,
   deleteRelationship,
   exportMarkdown,
-  extractDraftExcerpt,
   fetchConsistencyIssues,
   fetchConsistencyReport,
   fetchCampaignSessions,
@@ -59,11 +58,15 @@ import {
   fetchTimelineEvents,
   fetchWorld,
   generateAgentic,
+  previewDraftExtraction,
+  queueDraftExtraction,
   restoreRevision,
   updateConsistencyIssue,
   type CampaignSession,
   type ConsistencyIssueState,
   type ConsistencyIssueStatus,
+  type DraftExtractionCandidate,
+  type DraftExtractionCandidateKind,
   updateEntity,
   updateDraft,
   type ConsistencyReport,
@@ -108,6 +111,7 @@ const GRAPH_LAYOUTS: { value: GraphLayoutMode; label: string }[] = [
   { value: 'timeline_order', label: 'Timeline' },
 ];
 const DRAFT_STATUSES: DraftPassage['status'][] = ['draft', 'revising', 'ready', 'archived'];
+const DRAFT_CANDIDATE_KINDS: DraftExtractionCandidateKind[] = ['entity', 'relationship', 'timeline_event', 'lore_note'];
 const TEMPLATE_FIELDS: Record<string, string[]> = {
   Character: ['goal', 'secret', 'fear', 'voice'],
   Location: ['hazards', 'economy', 'culture', 'landmark'],
@@ -138,6 +142,10 @@ const PROMPTS = [
 type EntityForm = Pick<Entity, 'name' | 'entity_type' | 'description' | 'structured_fields'>;
 type DraftForm = Pick<DraftPassage, 'title' | 'body' | 'status' | 'linked_entity_ids' | 'linked_relationship_ids' | 'linked_timeline_event_ids'>;
 type WorkspaceView = 'dashboard' | 'canon' | 'drafts' | 'timeline' | 'planning' | 'campaign' | 'graph';
+
+type EditableDraftCandidate = Omit<DraftExtractionCandidate, 'payload'> & {
+  payloadText: string;
+};
 
 const blankEntity: EntityForm = {
   name: '',
@@ -184,6 +192,9 @@ const WorldDetail = () => {
   const [draftForm, setDraftForm] = useState<DraftForm>(blankDraft);
   const [draftSelection, setDraftSelection] = useState('');
   const [draftInstruction, setDraftInstruction] = useState('');
+  const [draftPreviewExcerpt, setDraftPreviewExcerpt] = useState('');
+  const [draftPreviewSummary, setDraftPreviewSummary] = useState('');
+  const [draftCandidates, setDraftCandidates] = useState<EditableDraftCandidate[]>([]);
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
   const [graphViews, setGraphViews] = useState<GraphView[]>([]);
   const [planningBoards, setPlanningBoards] = useState<PlanningBoard[]>([]);
@@ -332,6 +343,18 @@ const WorldDetail = () => {
   }, [draftForm, selectedDraft]);
 
   const latestDraftCheck = selectedDraft?.check_history[selectedDraft.check_history.length - 1] ?? null;
+  const draftCheckDelta = useMemo(() => {
+    if (!selectedDraft || selectedDraft.check_history.length < 2) return null;
+    const latest = selectedDraft.check_history[selectedDraft.check_history.length - 1];
+    const previous = selectedDraft.check_history[selectedDraft.check_history.length - 2];
+    const latestCodes = new Set(latest.issues.map((issue) => issue.code));
+    const previousCodes = new Set(previous.issues.map((issue) => issue.code));
+    return {
+      issueDelta: latest.issues.length - previous.issues.length,
+      newlySeen: Array.from(latestCodes).filter((code) => !previousCodes.has(code)),
+      resolved: Array.from(previousCodes).filter((code) => !latestCodes.has(code)),
+    };
+  }, [selectedDraft]);
 
   const linkedDraftEntities = useMemo(
     () => entities.filter((entity) => draftForm.linked_entity_ids.includes(entity.id)),
@@ -625,10 +648,17 @@ const WorldDetail = () => {
     return draftData;
   };
 
+  const clearDraftExtractionPreview = () => {
+    setDraftPreviewExcerpt('');
+    setDraftPreviewSummary('');
+    setDraftCandidates([]);
+  };
+
   const handleDraftSelect = (draftId: string) => {
     if (draftFormDirty && !window.confirm('Discard unsaved draft edits?')) return;
     const draft = drafts.find((item) => item.id === draftId);
     setSelectedDraftId(draftId || null);
+    clearDraftExtractionPreview();
     if (draft) {
       setDraftForm({
         title: draft.title,
@@ -648,6 +678,7 @@ const WorldDetail = () => {
     setDraftForm(blankDraft);
     setDraftSelection('');
     setDraftInstruction('');
+    clearDraftExtractionPreview();
   };
 
   const readMultiSelect = (select: HTMLSelectElement) => (
@@ -686,6 +717,7 @@ const WorldDetail = () => {
       await refreshDrafts();
       setSelectedDraftId(saved.id);
       setDraftSelection('');
+      clearDraftExtractionPreview();
       setStatusMessage(selectedDraft ? 'Draft saved.' : 'Draft created.');
     } catch {
       setErrorMessage('Unable to save draft.');
@@ -713,6 +745,7 @@ const WorldDetail = () => {
         linked_timeline_event_ids: nextDraft.linked_timeline_event_ids,
       } : blankDraft);
       setDraftSelection('');
+      clearDraftExtractionPreview();
       setStatusMessage('Draft deleted.');
     } catch {
       setErrorMessage('Unable to delete draft.');
@@ -724,23 +757,72 @@ const WorldDetail = () => {
   const handleDraftTextSelect = (event: React.SyntheticEvent<HTMLTextAreaElement>) => {
     const target = event.currentTarget;
     setDraftSelection(target.value.slice(target.selectionStart, target.selectionEnd).trim());
+    clearDraftExtractionPreview();
   };
 
-  const handleDraftExtract = async () => {
+  const handleDraftPreviewExtraction = async () => {
     if (!id || !selectedDraft || !draftSelection) return;
     setBusy(true);
     setErrorMessage('');
     try {
-      const result = await extractDraftExcerpt(id, selectedDraft.id, {
+      const result = await previewDraftExtraction(id, selectedDraft.id, {
         excerpt: draftSelection,
         instruction: draftInstruction.trim() || undefined,
         max_candidates: 6,
       });
+      setDraftPreviewExcerpt(result.excerpt);
+      setDraftPreviewSummary(result.summary);
+      setDraftCandidates(result.candidates.map((candidate) => ({
+        candidate_kind: candidate.candidate_kind,
+        suggested_name: candidate.suggested_name,
+        suggested_type: candidate.suggested_type,
+        content: candidate.content,
+        payloadText: JSON.stringify(candidate.payload ?? {}, null, 2),
+      })));
+      setStatusMessage(result.summary);
+    } catch {
+      setErrorMessage('Unable to preview canon candidates from draft selection.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateDraftCandidate = (
+    index: number,
+    updates: Partial<EditableDraftCandidate>,
+  ) => {
+    setDraftCandidates((current) => current.map((candidate, candidateIndex) => (
+      candidateIndex === index ? { ...candidate, ...updates } : candidate
+    )));
+  };
+
+  const removeDraftCandidate = (index: number) => {
+    setDraftCandidates((current) => current.filter((_, candidateIndex) => candidateIndex !== index));
+  };
+
+  const handleDraftQueueExtraction = async () => {
+    if (!id || !selectedDraft || !draftPreviewExcerpt || draftCandidates.length === 0) return;
+    setBusy(true);
+    setErrorMessage('');
+    try {
+      const candidates = draftCandidates.map((candidate) => ({
+        candidate_kind: candidate.candidate_kind,
+        suggested_name: candidate.suggested_name.trim(),
+        suggested_type: candidate.suggested_type?.trim() || null,
+        content: candidate.content.trim(),
+        payload: JSON.parse(candidate.payloadText || '{}') as Record<string, unknown>,
+      }));
+      const result = await queueDraftExtraction(id, selectedDraft.id, {
+        excerpt: draftPreviewExcerpt,
+        instruction: draftInstruction.trim() || undefined,
+        candidates,
+      });
       await refreshReviewData();
       setDraftSelection('');
+      clearDraftExtractionPreview();
       setStatusMessage(`${result.suggestions.length} canon suggestion(s) queued.`);
     } catch {
-      setErrorMessage('Unable to extract canon suggestions from draft selection.');
+      setErrorMessage('Unable to queue edited canon candidates. Check candidate fields and payload JSON.');
     } finally {
       setBusy(false);
     }
@@ -2082,6 +2164,7 @@ const WorldDetail = () => {
                         onChange={(event) => {
                           setDraftForm({ ...draftForm, body: event.target.value });
                           setDraftSelection('');
+                          clearDraftExtractionPreview();
                         }}
                         onSelect={handleDraftTextSelect}
                         placeholder="Write or paste a scene draft, save it, then select an excerpt to extract"
@@ -2200,9 +2283,9 @@ const WorldDetail = () => {
                         <ClipboardCheck size={16} />
                         Check
                       </button>
-                      <button className="btn btn-secondary" type="button" onClick={handleDraftExtract} disabled={!selectedDraft || draftFormDirty || !draftSelection || busy}>
+                      <button className="btn btn-secondary" type="button" onClick={handleDraftPreviewExtraction} disabled={!selectedDraft || draftFormDirty || !draftSelection || busy}>
                         <Sparkles size={16} />
-                        Extract
+                        Preview Extraction
                       </button>
                       {selectedDraft && (
                         <button className="btn btn-danger" type="button" onClick={handleDraftDelete} disabled={busy}>
@@ -2222,6 +2305,88 @@ const WorldDetail = () => {
                     <h2>Draft Review</h2>
                     {latestDraftCheck && <span className="review-badge">{latestDraftCheck.issues.length} latest issues</span>}
                   </div>
+                  {draftCandidates.length > 0 && (
+                    <div className="draft-candidate-review" aria-label="Extraction candidate review">
+                      <div className="draft-check-summary">
+                        <strong>{draftPreviewSummary}</strong>
+                        <span>{draftCandidates.length} candidate{draftCandidates.length === 1 ? '' : 's'}</span>
+                      </div>
+                      <div className="draft-candidate-list">
+                        {draftCandidates.map((candidate, index) => (
+                          <article className="draft-candidate-item" key={`${candidate.candidate_kind}-${index}`}>
+                            <div className="form-row compact">
+                              <label className="field-label">
+                                <span>Name</span>
+                                <input
+                                  className="form-input"
+                                  value={candidate.suggested_name}
+                                  onChange={(event) => updateDraftCandidate(index, { suggested_name: event.target.value })}
+                                />
+                              </label>
+                              <label className="field-label">
+                                <span>Kind</span>
+                                <select
+                                  className="form-input"
+                                  value={candidate.candidate_kind}
+                                  onChange={(event) => updateDraftCandidate(index, { candidate_kind: event.target.value as DraftExtractionCandidateKind })}
+                                >
+                                  {DRAFT_CANDIDATE_KINDS.map((kind) => (
+                                    <option key={kind} value={kind}>{kind.replace('_', ' ')}</option>
+                                  ))}
+                                </select>
+                              </label>
+                            </div>
+                            <label className="field-label">
+                              <span>Type</span>
+                              <input
+                                className="form-input"
+                                value={candidate.suggested_type ?? ''}
+                                onChange={(event) => updateDraftCandidate(index, { suggested_type: event.target.value })}
+                              />
+                            </label>
+                            <label className="field-label">
+                              <span>Content</span>
+                              <textarea
+                                className="form-input"
+                                value={candidate.content}
+                                rows={3}
+                                onChange={(event) => updateDraftCandidate(index, { content: event.target.value })}
+                              />
+                            </label>
+                            <label className="field-label">
+                              <span>Payload JSON</span>
+                              <textarea
+                                className="form-input payload-editor"
+                                value={candidate.payloadText}
+                                rows={4}
+                                onChange={(event) => updateDraftCandidate(index, { payloadText: event.target.value })}
+                              />
+                            </label>
+                            <div className="form-actions">
+                              <button className="btn btn-secondary" type="button" onClick={() => removeDraftCandidate(index)} disabled={busy}>
+                                <Trash2 size={16} />
+                                Remove
+                              </button>
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                      <div className="form-actions">
+                        <button className="btn btn-primary" type="button" onClick={handleDraftQueueExtraction} disabled={busy || draftCandidates.length === 0}>
+                          <Sparkles size={16} />
+                          Queue All
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {draftCheckDelta && (
+                    <div className="draft-delta-summary" aria-label="Latest vs previous check">
+                      <strong>Latest vs previous check</strong>
+                      <span>{draftCheckDelta.issueDelta >= 0 ? '+' : ''}{draftCheckDelta.issueDelta} issues</span>
+                      <p>New: {draftCheckDelta.newlySeen.length ? draftCheckDelta.newlySeen.join(', ') : 'none'}</p>
+                      <p>Resolved: {draftCheckDelta.resolved.length ? draftCheckDelta.resolved.join(', ') : 'none'}</p>
+                    </div>
+                  )}
                   {latestDraftCheck ? (
                     <div className="draft-review">
                       <div className="draft-check-summary">

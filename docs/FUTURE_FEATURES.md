@@ -1,173 +1,142 @@
-# Future Feature Roadmap for Solo Writers
+# Future Features
 
-Literary World Generator has moved beyond a basic world bible. The app now
-includes canon entities and relationships, timeline planning, graph views,
-planning boards, revision history, generation suggestions, persisted canon
-issues, saved drafts with check history, draft extraction, campaign sessions,
-lore notes, faction clocks, wiki/player visibility, and multiple Markdown export
-presets. The world workspace also has a dashboard tab that surfaces review
-queues and links into the main writing workflows.
-
-The next product step is workflow polish: make canon, drafts, timelines,
-campaign notes, wiki views, suggestions, and exports feel like one connected
-daily writing workspace instead of separate panels.
+This roadmap describes likely product direction for Literary World Generator.
+It is intentionally practical: items here should be suitable starting points for
+issues, design notes, or implementation plans. It does not commit the project to
+delivery dates.
 
 ## Product Direction
 
-- Keep the graph-first world bible model central.
-- Treat LLM output as reviewable suggestions until a writer explicitly accepts
-  it.
-- Preserve existing world, entity, relationship, timeline, suggestion, draft,
-  campaign, lore-note, clock, and export response shapes while adding new
-  resources alongside them.
-- Prioritize workflows that reduce repeated manual bookkeeping for solo fiction
-  writers, with TTRPG support as a strong secondary path.
+Literary World Generator should remain a graph-first world bible for fiction
+writers and campaign runners. The core workflow is to capture canon, connect it
+to drafts and sessions, review generated or extracted suggestions, and export
+useful writing context without losing track of what is true in the world.
 
-## Near Term
+Near-term work should make the current FastAPI and React app feel more connected
+across canon, drafts, timelines, graph views, planning boards, campaign notes,
+lore visibility, consistency reports, LLM suggestions, and Markdown exports.
 
-### World dashboard (frontend foundation complete)
+## Near-Term Priorities
 
-- Completed: the world detail page now opens to a dashboard tab summarizing open
-  canon issues, recent drafts, pending suggestions, timeline activity, campaign
-  notes, active faction clocks, and next planning cards.
-- Completed: dashboard cards link into the relevant workflow tabs for canon
-  review, suggestion handling, draft work, timeline planning, campaign notes, and
-  planning boards.
-- Remaining: add a backend dashboard summary resource so the frontend does not
-  have to aggregate multiple endpoint responses.
-- Remaining: add durable activity history for accepted suggestions, draft
-  checks, updated lore notes, faction clock movement, exports, and wiki/share
-  events.
-- Remaining: deepen item-level links for timeline events, individual planning
-  cards, lore notes, and export packets once those views support direct item
-  focus.
+### Canon Graph Improvements
 
-### Draft-to-canon polish
+- Improve saved graph views with direct focus links, clearer filter state, and
+  better handling for dense relationship networks.
+- Add graph-aware review queues for isolated entities, weak relationships,
+  overloaded nodes, and missing relationship context.
+- Make relationship metadata easier to compare and edit, especially stance,
+  category, strength, display priority, and history.
 
-- Make draft extraction a primary workflow instead of a secondary action.
-- Let writers select prose, preview candidate entities, relationships, timeline
-  events, and lore notes, then edit candidates before sending them to the
-  suggestion inbox.
-- Show which canon links and timeline events a draft already touches before and
-  after extraction.
-- Compare repeated draft checks so a writer can see whether a revision resolved
-  or introduced canon issues.
+### Draft-to-Canon Workflows
 
-### Smarter generation review
+- Promote draft extraction into a primary review workflow.
+- Let writers preview and edit candidate entities, relationships, timeline
+  events, and lore notes before they enter the suggestion inbox.
+- Show which canon items a draft already links to and what changed after each
+  passage check or extraction.
+- Compare draft check history across revisions so resolved and newly introduced
+  issues are visible.
 
-- Parse multiple candidate entities, relationships, timeline events, lore notes,
-  or edits from a single LLM result.
-- Show an editable preview before anything is saved.
-- Add a diff view when generated text would change existing canon.
-- Store prompt, source context, model metadata, provenance, and acceptance
-  history for saved generated lore.
+### Generation Review
 
-## Mid Term
+- Parse multiple structured candidates from one LLM result instead of storing
+  large generated text as a single suggestion.
+- Add editable previews and diffs for generated changes to existing canon.
+- Store provenance for generated material, including prompt, source context,
+  model details, acceptance state, and target resource.
+- Keep generated and extracted material non-destructive until explicitly
+  accepted, replaced, appended, or discarded.
 
-### Stronger wiki and player view
+### Consistency Checks
 
-- Expand player-visible lore with redactions, discovered-state history, and
-  handout-ready text.
-- Add share/export modes for TTRPG players and collaborators without exposing
-  DM-only notes.
-- Link wiki entries back to source sessions, drafts, suggestions, timeline
-  events, and canon changes.
-- Add preview controls so a GM can inspect exactly what a player-facing view
-  contains before sharing it.
+- Expand canon checks beyond duplicates, thin lore, orphaned entities, weak
+  relationships, contradictions, and timeline gaps.
+- Track issue lifecycle more deeply with assignment, recurring issue history,
+  and links back to drafts, sessions, suggestions, and affected canon.
+- Provide targeted fix actions where possible, such as linking an orphaned
+  entity, adding relationship pressure, or updating a timeline dependency.
 
-### Import workflows
+## Mid-Term Feature Areas
 
-- Import Markdown and Obsidian notes into reviewable import jobs.
-- Extract candidate entities, relationships, timeline events, and lore notes into
-  the existing suggestion inbox.
-- Preserve source file metadata, extraction warnings, and errors so writers can
-  re-run or audit imports.
-- Keep imported suggestions non-destructive until accepted.
+### Campaign and Session Tooling
 
-### Deeper timeline planning
+- Turn session impact reviews into a complete post-session workflow that can
+  propose canon updates, timeline changes, lore notes, and faction clock
+  movement.
+- Add better prep views that combine active clocks, unresolved lore, linked
+  entities, recent sessions, and player-visible handouts.
+- Support session and campaign summaries that can be exported without exposing
+  private notes.
 
-- Add visual drag reordering for events with relative dates.
-- Flag dependency warnings when reordered events contradict causes,
+### Lore Visibility and Handouts
+
+- Expand lore note visibility states into a stronger player-facing review flow.
+- Add redaction previews so a GM can verify what a player or collaborator will
+  see.
+- Link handouts back to their source canon, session, timeline event, or draft
+  excerpt for auditability.
+- Add export presets for selected player-safe packets, scene briefs, and session
+  briefs.
+
+### Import and Export Workflows
+
+- Add import jobs for Markdown, Obsidian notes, and structured JSON.
+- Route imported candidates through the existing suggestion review model instead
+  of writing directly to canon.
+- Preserve import source metadata, warnings, errors, and rerun history.
+- Expand Markdown export into folder-based Obsidian vault exports,
+  Scrivener-friendly Markdown, JSON backups, and selected canon packets.
+
+### Planning and Timeline
+
+- Add drag reordering and grouping for timeline events by era, arc, faction,
+  location, draft, or session.
+- Warn when event reordering conflicts with dependencies, causes,
   consequences, or participant availability.
-- Group events by era, arc, location, faction, session, draft, or custom planning
-  label.
-- Add participant filters and summaries of what changed because of each event.
+- Make planning cards easier to connect to timeline events, drafts, lore notes,
+  sessions, and faction clocks.
 
-### Writing-tool exports
+## Longer-Term Ideas
 
-- Expand the existing Markdown presets into folder-based Obsidian vault exports,
-  Scrivener-friendly Markdown, selected canon packets, player handouts, and
-  scene-specific context briefs.
-- Include backlinks, tags, timeline snippets, relationship summaries, lore-note
-  visibility, and campaign-session context where the target format supports
-  them.
-- Let writers export only the canon connected to a scene, arc, faction, session,
-  draft, or selected set of entities.
+### Collaboration and Permissions
 
-## Long Term
+- Add multi-user worlds with owner, editor, viewer, and player-facing roles.
+- Keep private notes, DM-only lore, generated drafts, and player-visible
+  handouts behind explicit permissions.
+- Add an activity trail for accepted suggestions, canon edits, exports, imports,
+  visibility changes, and session updates.
 
-### World analytics
+### Project Templates
 
-- Surface thin lore, isolated entities, missing relationship pressure, overloaded
-  protagonists, faction balance, timeline density, and unresolved
-  contradictions.
-- Show analytics as actionable review queues rather than static charts.
-- Let writers jump from each signal to the relevant canon, draft, timeline event,
-  session, lore note, faction clock, or suggestion.
+- Provide starter templates for novels, TTRPG campaigns, mysteries, epic
+  fantasy, science fiction, and historical fiction.
+- Seed templates with useful entity types, structured fields, relationship
+  categories, planning lanes, lore visibility defaults, and export presets.
+- Preserve custom fields when a world adopts or changes templates.
 
-### Project templates
+### World Analytics
 
-- Offer starter schemas for novels, TTRPG campaigns, epic fantasy, sci-fi
-  settings, mysteries, and historical fiction.
-- Preserve custom fields when a project switches templates or adds a specialized
-  schema later.
-- Seed templates with useful entity types, relationship categories, timeline
-  fields, planning-board lanes, lore-note visibility defaults, faction clocks,
-  and export presets.
+- Surface thin lore, relationship imbalance, timeline density, unresolved
+  contradictions, missing faction pressure, and protagonist overuse as
+  actionable review queues.
+- Let each analytic signal link directly to the relevant canon, draft, timeline
+  event, session, lore note, graph view, or suggestion.
 
-### Local-first reliability
+### Local-First Reliability
 
-- Add backup and restore for local project data.
-- Add JSON export and import for worlds, canon, drafts, timeline data,
-  suggestions, issue states, campaign sessions, lore notes, faction clocks, graph
-  views, and planning boards.
-- Add deeper readiness checks for Neo4j and LLM configuration for local
-  operators.
-- Make degraded-mode behavior clear when the graph database or LLM is
+- Add backup and restore workflows for local project data.
+- Improve degraded-mode messaging when Neo4j or the configured LLM provider is
   unavailable.
+- Add operator-facing readiness checks for database connectivity, migrations,
+  authentication settings, and LLM configuration.
 
-## Public APIs and Data Model
+## Non-Goals For Now
 
-- Add backend dashboard summary resources that aggregate existing issues, drafts,
-  suggestions, timeline events, campaign notes, faction clocks, and planning
-  cards without changing those resource shapes. The current dashboard frontend
-  uses existing endpoints as an interim implementation.
-- Add review metadata for generated and imported suggestions: prompt, source
-  context, model metadata, provenance, accepted-at timestamp, accepted target,
-  and diff information where relevant.
-- Add import job resources with source text or file metadata, extracted
-  suggestions, status, warnings, and errors.
-- Add export job or preset options for multi-file exports without breaking the
-  current Markdown export endpoint.
-- Avoid changing current world, entity, relationship, timeline, suggestion,
-  draft, campaign, lore-note, faction-clock, and issue response shapes.
-
-## Test Plan
-
-- Frontend dashboard link coverage exists. Add/keep tests for draft extraction
-  preview, suggestion acceptance, wiki visibility, player-safe exports, and
-  export preset selection.
-- Backend tests for dashboard summaries, suggestion review metadata, import
-  suggestion creation, JSON backup/restore, export presets, and
-  backward-compatible response shapes.
-- LLM tests with fake services for extraction, canon checks, multi-suggestion
-  parsing, diff generation, and unavailable-model fallbacks.
-- Regression tests that keep existing draft, campaign-session, lore-note,
-  faction-clock, issue lifecycle, and Markdown export behavior stable.
-
-## Assumptions
-
-- The primary audience remains solo fiction writers.
-- TTRPG campaign support remains a strong secondary path.
-- The graph-first world bible model stays central.
-- New LLM actions remain non-destructive until explicitly accepted by the writer.
+- Do not make LLM output automatically overwrite canon.
+- Do not replace the graph-first canon model with unstructured notes.
+- Do not require an LLM provider for core world-building workflows.
+- Do not introduce real-time collaboration until permissions and audit trails
+  are designed.
+- Do not break existing API response shapes for worlds, entities,
+  relationships, timelines, suggestions, drafts, sessions, lore notes, faction
+  clocks, consistency issues, graph views, planning boards, or Markdown exports.
