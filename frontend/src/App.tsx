@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState, type FormEvent } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { Globe, LogOut } from 'lucide-react';
+import { AxiosError } from 'axios';
 import { AUTH_TOKEN_KEY, fetchMe, loginUser, registerUser, type User } from './lib/api';
 import './App.css';
 
@@ -39,6 +40,24 @@ function AuthGate({ onAuthenticated }: { onAuthenticated: (user: User) => void }
   const [errorMessage, setErrorMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  const getErrorMessage = (error: unknown) => {
+    if (error instanceof AxiosError) {
+      const detail = error.response?.data?.detail;
+      if (typeof detail === 'string') {
+        return detail;
+      }
+      if (Array.isArray(detail)) {
+        return detail
+          .map((issue) => {
+            const field = Array.isArray(issue.loc) ? issue.loc[issue.loc.length - 1] : 'field';
+            return `${field}: ${issue.msg}`;
+          })
+          .join(' ');
+      }
+    }
+    return mode === 'login' ? 'Invalid username or password.' : 'Unable to create that account.';
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSubmitting(true);
@@ -50,8 +69,8 @@ function AuthGate({ onAuthenticated }: { onAuthenticated: (user: User) => void }
       const token = await loginUser({ username, password });
       localStorage.setItem(AUTH_TOKEN_KEY, token.access_token);
       onAuthenticated(await fetchMe());
-    } catch {
-      setErrorMessage(mode === 'login' ? 'Invalid username or password.' : 'Unable to create that account.');
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
     } finally {
       setSubmitting(false);
     }
@@ -75,7 +94,15 @@ function AuthGate({ onAuthenticated }: { onAuthenticated: (user: User) => void }
         <form className="auth-form" onSubmit={handleSubmit}>
           <label>
             Username
-            <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required />
+            <input
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              autoComplete="username"
+              minLength={mode === 'register' ? 3 : 1}
+              maxLength={mode === 'register' ? 80 : 320}
+              pattern={mode === 'register' ? '[A-Za-z0-9_.-]+' : undefined}
+              required
+            />
           </label>
           {mode === 'register' && (
             <label>
@@ -85,7 +112,15 @@ function AuthGate({ onAuthenticated }: { onAuthenticated: (user: User) => void }
           )}
           <label>
             Password
-            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required />
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+              minLength={mode === 'register' ? 8 : 1}
+              maxLength={1024}
+              required
+            />
           </label>
           {errorMessage && <div className="workspace-alert error" role="alert">{errorMessage}</div>}
           <button className="btn btn-primary" type="submit" disabled={submitting}>

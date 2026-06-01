@@ -301,6 +301,19 @@ test('workspace modes support keyboard navigation and selected context filters',
   await expect(page.getByText('Mara Vey protects Glass Harbor')).toBeVisible();
 });
 
+test('world bible entity clicks open the canon editor', async ({ page }) => {
+  await page.goto(`/worlds/${world.id}`);
+  await expect(page.getByRole('tab', { name: 'Dashboard' })).toHaveAttribute('aria-selected', 'true');
+
+  await page
+    .getByLabel('World bible entity browser')
+    .getByRole('button', { name: /Glass Harbor/ })
+    .click();
+
+  await expect(page.getByRole('tab', { name: 'Canon' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('textbox', { name: 'Entity name' })).toHaveValue('Glass Harbor');
+});
+
 test('world dashboard links into review and writing workflows', async ({ page }) => {
   await page.goto(`/worlds/${world.id}`);
   await expect(page.getByRole('heading', { name: 'World Dashboard' })).toBeVisible();

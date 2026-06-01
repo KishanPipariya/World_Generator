@@ -686,9 +686,10 @@ const WorldDetail = () => {
   );
 
   const selectEntity = (entityId: string | null) => {
-    if (entityFormDirty && !window.confirm('Discard unsaved entity edits?')) return;
+    if (entityFormDirty && !window.confirm('Discard unsaved entity edits?')) return false;
     setSelectedEntityId(entityId);
     setSelectedRelationshipId(null);
+    return true;
   };
 
   const handleDraftSave = async (event: React.FormEvent) => {
@@ -1784,7 +1785,9 @@ const WorldDetail = () => {
             <button
               className="icon-button"
               type="button"
-              onClick={() => selectEntity(null)}
+              onClick={() => {
+                if (selectEntity(null)) setActiveView('canon');
+              }}
               title="New entity"
               aria-label="Create new entity"
             >
@@ -1817,7 +1820,9 @@ const WorldDetail = () => {
                         searchResult.matchingEntityIds.has(entity.id) ? 'search-match' : '',
                       ].filter(Boolean).join(' ')}
                       key={entity.id}
-                      onClick={() => selectEntity(entity.id)}
+                      onClick={() => {
+                        if (selectEntity(entity.id)) setActiveView('canon');
+                      }}
                       type="button"
                     >
                       <span>{entity.name}</span>
