@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+if [ "${SKIP_HOOKS:-}" = "1" ]; then
+  echo "Skipping pre-push hook because SKIP_HOOKS=1"
+  exit 0
+fi
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+if ! command -v uv >/dev/null 2>&1; then
+  echo "uv is required for backend tests. Install uv or push with SKIP_HOOKS=1." >&2
+  exit 1
+fi
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "npm is required for frontend checks. Install Node.js/npm or push with SKIP_HOOKS=1." >&2
+  exit 1
+fi
+
+echo "Running backend tests..."
+uv run pytest
+
+echo "Running frontend check..."
+npm --prefix frontend run check
+

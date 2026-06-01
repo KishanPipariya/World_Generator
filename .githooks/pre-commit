@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+if [ "${SKIP_HOOKS:-}" = "1" ]; then
+  echo "Skipping pre-commit hook because SKIP_HOOKS=1"
+  exit 0
+fi
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+if ! command -v uv >/dev/null 2>&1; then
+  echo "uv is required for backend linting. Install uv or commit with SKIP_HOOKS=1." >&2
+  exit 1
+fi
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "npm is required for frontend linting. Install Node.js/npm or commit with SKIP_HOOKS=1." >&2
+  exit 1
+fi
+
+echo "Running backend lint..."
+uv run ruff check
+
+echo "Running frontend lint..."
+npm --prefix frontend run lint
+

@@ -58,6 +58,11 @@
   width: 100%;
 }
 
+.main-content:has(.world-detail-container) {
+  max-width: 1680px;
+  padding-inline: clamp(1rem, 2vw, 2rem);
+}
+
 .auth-shell {
   min-height: 100vh;
   display: grid;

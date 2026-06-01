@@ -228,6 +228,18 @@ cd frontend
 npm run build
 ```
 
+## Git Hooks
+
+This repo includes Git hooks in `.githooks/`. Enable them for your checkout:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The pre-commit hook runs backend and frontend linting. The pre-push hook runs
+backend tests and the full frontend check. For urgent one-off bypasses, prefix
+the Git command with `SKIP_HOOKS=1`.
+
 ## Project Layout
 
 - `app/main.py` - FastAPI application and router setup.

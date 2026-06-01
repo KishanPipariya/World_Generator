@@ -1482,26 +1482,30 @@ const WorldDetail = () => {
       </div>
 
       <div className="world-header">
-        <div className="title-section">
-          <h1>{world.title}</h1>
-          <div className="tags">
-            {world.tone && <span className="badge badge-primary">{world.tone}</span>}
-          <span className="badge">{entities.length} entities</span>
-          <span className={`badge ${health?.status === 'ok' ? 'badge-good' : 'badge-muted'}`}>
-            <Activity size={13} />
-            {health?.status === 'ok' ? 'Backend ready' : 'Backend unknown'}
-          </span>
-        </div>
-      </div>
-      <div className="meta-section">
-          <div className="meta-item">
-            <Clock size={16} />
-            <span>Created {new Date(world.created_at).toLocaleDateString()}</span>
+        <div className="world-header-main">
+          <div className="title-section">
+            <h1>{world.title}</h1>
+            <div className="tags">
+              {world.tone && <span className="badge badge-primary">{world.tone}</span>}
+              <span className="badge">{entities.length} entities</span>
+              <span className={`badge ${health?.status === 'ok' ? 'badge-good' : 'badge-muted'}`}>
+                <Activity size={13} />
+                {health?.status === 'ok' ? 'Backend ready' : 'Backend unknown'}
+              </span>
+            </div>
           </div>
-          <Link to={`/wiki/${world.id}`} className="btn btn-primary">
-            <BookOpen size={16} />
-            Wiki
-          </Link>
+          <div className="world-primary-actions">
+            <div className="meta-item">
+              <Clock size={16} />
+              <span>Created {new Date(world.created_at).toLocaleDateString()}</span>
+            </div>
+            <Link to={`/wiki/${world.id}`} className="btn btn-primary">
+              <BookOpen size={16} />
+              Wiki
+            </Link>
+          </div>
+        </div>
+        <div className="meta-section" aria-label="World tools">
           <button className="btn btn-secondary" onClick={handleConsistencyReport} disabled={busy}>
             <ClipboardCheck size={16} />
             Report
@@ -1523,10 +1527,10 @@ const WorldDetail = () => {
             Export
           </button>
           <div className="danger-actions" aria-label="Danger actions">
-          <button className="btn btn-danger" onClick={handleDeleteWorld} disabled={busy} type="button">
-            <Trash2 size={16} />
-            Delete World
-          </button>
+            <button className="btn btn-danger" onClick={handleDeleteWorld} disabled={busy} type="button">
+              <Trash2 size={16} />
+              Delete World
+            </button>
           </div>
         </div>
       </div>
