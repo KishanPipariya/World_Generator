@@ -321,7 +321,9 @@ def list_suggestions(
     suggestions = svc.list_generation_suggestions(world_id)
     if suggestions is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
-    return GenerationSuggestionListResponse(suggestions=suggestions)
+    return GenerationSuggestionListResponse(
+        suggestions=[suggestion for suggestion in suggestions if suggestion.source_type != "dm"]
+    )
 
 
 @router.post(
@@ -560,6 +562,149 @@ def create_campaign_impact_review(
     if not suggestion:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign session not found")
     return CampaignImpactReviewResponse(suggestion=suggestion)
+
+
+@router.get("/{world_id}/dm/sessions", response_model=CampaignSessionListResponse)
+def list_dm_sessions(
+    world_id: UUID,
+    svc: WorldService = Depends(get_world_service),
+) -> CampaignSessionListResponse:
+    return list_campaign_sessions(world_id, svc)
+
+
+@router.post(
+    "/{world_id}/dm/sessions",
+    response_model=CampaignSessionRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_dm_session(
+    world_id: UUID,
+    body: CampaignSessionCreate,
+    svc: WorldService = Depends(get_world_service),
+) -> CampaignSessionRead:
+    return create_campaign_session(world_id, body, svc)
+
+
+@router.patch("/{world_id}/dm/sessions/{session_id}", response_model=CampaignSessionRead)
+def update_dm_session(
+    world_id: UUID,
+    session_id: UUID,
+    body: CampaignSessionUpdate,
+    svc: WorldService = Depends(get_world_service),
+) -> CampaignSessionRead:
+    return update_campaign_session(world_id, session_id, body, svc)
+
+
+@router.delete("/{world_id}/dm/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_dm_session(
+    world_id: UUID,
+    session_id: UUID,
+    svc: WorldService = Depends(get_world_service),
+) -> None:
+    return delete_campaign_session(world_id, session_id, svc)
+
+
+@router.post(
+    "/{world_id}/dm/sessions/{session_id}/impact-review",
+    response_model=CampaignImpactReviewResponse,
+)
+def create_dm_impact_review(
+    world_id: UUID,
+    session_id: UUID,
+    body: CampaignImpactReviewRequest | None = None,
+    _rate_limited: object = Depends(check_generation_rate_limit),
+    svc: WorldService = Depends(get_world_service),
+) -> CampaignImpactReviewResponse:
+    return create_campaign_impact_review(world_id, session_id, body, _rate_limited, svc)
+
+
+@router.get("/{world_id}/dm/lore-notes", response_model=LoreNoteListResponse)
+def list_dm_lore_notes(
+    world_id: UUID,
+    svc: WorldService = Depends(get_world_service),
+) -> LoreNoteListResponse:
+    return list_lore_notes(world_id, svc)
+
+
+@router.post("/{world_id}/dm/lore-notes", response_model=LoreNoteRead, status_code=status.HTTP_201_CREATED)
+def create_dm_lore_note(
+    world_id: UUID,
+    body: LoreNoteCreate,
+    svc: WorldService = Depends(get_world_service),
+) -> LoreNoteRead:
+    return create_lore_note(world_id, body, svc)
+
+
+@router.patch("/{world_id}/dm/lore-notes/{note_id}", response_model=LoreNoteRead)
+def update_dm_lore_note(
+    world_id: UUID,
+    note_id: UUID,
+    body: LoreNoteUpdate,
+    svc: WorldService = Depends(get_world_service),
+) -> LoreNoteRead:
+    return update_lore_note(world_id, note_id, body, svc)
+
+
+@router.delete("/{world_id}/dm/lore-notes/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_dm_lore_note(
+    world_id: UUID,
+    note_id: UUID,
+    svc: WorldService = Depends(get_world_service),
+) -> None:
+    return delete_lore_note(world_id, note_id, svc)
+
+
+@router.get("/{world_id}/dm/faction-clocks", response_model=FactionClockListResponse)
+def list_dm_faction_clocks(
+    world_id: UUID,
+    svc: WorldService = Depends(get_world_service),
+) -> FactionClockListResponse:
+    return list_faction_clocks(world_id, svc)
+
+
+@router.post(
+    "/{world_id}/dm/faction-clocks",
+    response_model=FactionClockRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_dm_faction_clock(
+    world_id: UUID,
+    body: FactionClockCreate,
+    svc: WorldService = Depends(get_world_service),
+) -> FactionClockRead:
+    return create_faction_clock(world_id, body, svc)
+
+
+@router.patch("/{world_id}/dm/faction-clocks/{clock_id}", response_model=FactionClockRead)
+def update_dm_faction_clock(
+    world_id: UUID,
+    clock_id: UUID,
+    body: FactionClockUpdate,
+    svc: WorldService = Depends(get_world_service),
+) -> FactionClockRead:
+    return update_faction_clock(world_id, clock_id, body, svc)
+
+
+@router.delete("/{world_id}/dm/faction-clocks/{clock_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_dm_faction_clock(
+    world_id: UUID,
+    clock_id: UUID,
+    svc: WorldService = Depends(get_world_service),
+) -> None:
+    return delete_faction_clock(world_id, clock_id, svc)
+
+
+@router.get("/{world_id}/dm/suggestions", response_model=GenerationSuggestionListResponse)
+def list_dm_suggestions(
+    world_id: UUID,
+    svc: WorldService = Depends(get_world_service),
+) -> GenerationSuggestionListResponse:
+    suggestions = svc.list_generation_suggestions(world_id)
+    if suggestions is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="World not found")
+    return GenerationSuggestionListResponse(
+        suggestions=[suggestion for suggestion in suggestions if suggestion.source_type == "dm"]
+    )
 
 
 @router.get("/{world_id}/lore-notes", response_model=LoreNoteListResponse)
@@ -863,3 +1008,12 @@ def export_markdown(
     slug = world.title.strip().lower().replace(" ", "-") or "world"
     filename = f"{slug}-{preset.replace('_', '-')}.md"
     return MarkdownExportResponse(world_id=world_id, filename=filename, content=content, preset=preset)
+
+
+@router.get("/{world_id}/dm/export/markdown", response_model=MarkdownExportResponse)
+def export_dm_markdown(
+    world_id: UUID,
+    preset: ExportPreset = "dm_campaign_brief",
+    svc: WorldService = Depends(get_world_service),
+) -> MarkdownExportResponse:
+    return export_markdown(world_id, preset, svc)

@@ -1,4 +1,4 @@
-import { BookOpen, Database, FolderOpen } from 'lucide-react';
+import { BookOpen, Database, FolderOpen, Shield } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { World } from '../../lib/api';
 import { RecentWorldLink, SectionHeader } from '../molecules';
@@ -43,7 +43,14 @@ export function WorldDashboardPanels({
               <Database size={18} aria-hidden="true" />
               <span>
                 <strong>Workspace</strong>
-                <small>Canon, drafts, timeline, planning, graph, and campaign tools.</small>
+                <small>Canon, drafts, timeline, planning, and graph tools.</small>
+              </span>
+            </Link>
+            <Link to={`/worlds/${recentWorlds[0].id}/dm`} className="quick-link">
+              <Shield size={18} aria-hidden="true" />
+              <span>
+                <strong>DM Workflow</strong>
+                <small>Sessions, lore notes, clocks, impact review, and handouts.</small>
               </span>
             </Link>
             <Link to={`/wiki/${recentWorlds[0].id}`} className="quick-link">

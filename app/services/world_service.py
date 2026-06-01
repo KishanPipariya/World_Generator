@@ -1169,6 +1169,8 @@ class WorldService:
             content=content,
             suggested_name=f"Session {session.session_number} Impact Review",
             suggested_type="Event",
+            source_type="dm",
+            source_id=session_id,
         )
 
     def list_revisions(

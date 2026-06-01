@@ -509,7 +509,11 @@ def test_campaign_resources_exports_and_impact_review(client: TestClient) -> Non
     impact = client.post(f"/worlds/{wid}/campaign-sessions/{sid}/impact-review", json={})
     assert impact.status_code == 200
     assert impact.json()["suggestion"]["status"] == "pending"
+    assert impact.json()["suggestion"]["source_type"] == "dm"
+    assert impact.json()["suggestion"]["source_id"] == sid
     assert "false prior" in impact.json()["suggestion"]["content"]
+    assert client.get(f"/worlds/{wid}/suggestions").json()["suggestions"] == []
+    assert client.get(f"/worlds/{wid}/dm/suggestions").json()["suggestions"][0]["source_type"] == "dm"
 
     bad = client.post(
         f"/worlds/{wid}/campaign-sessions",
@@ -520,6 +524,53 @@ def test_campaign_resources_exports_and_impact_review(client: TestClient) -> Non
         },
     )
     assert bad.status_code == 404
+
+
+def test_dm_routes_use_campaign_resources_and_exports(client: TestClient) -> None:
+    world = client.post("/worlds", json={"title": "DM Desk"}).json()
+    wid = world["id"]
+
+    session = client.post(
+        f"/worlds/{wid}/dm/sessions",
+        json={
+            "session_number": 1,
+            "title": "Lantern Bargain",
+            "recap": "The party bargained with the lantern court.",
+            "player_actions": "Promised safe passage.",
+            "consequences": "A hidden faction clock advances.",
+        },
+    )
+    assert session.status_code == 201
+    sid = session.json()["id"]
+    assert client.get(f"/worlds/{wid}/dm/sessions").json()["sessions"][0]["title"] == "Lantern Bargain"
+
+    note = client.post(
+        f"/worlds/{wid}/dm/lore-notes",
+        json={
+            "title": "Lantern Debt",
+            "body": "The court collects debts in names.",
+            "visibility": "dm_only",
+        },
+    )
+    assert note.status_code == 201
+    clock = client.post(
+        f"/worlds/{wid}/dm/faction-clocks",
+        json={"title": "Court Collection", "segments": 6, "filled_segments": 1, "linked_session_ids": [sid]},
+    )
+    assert clock.status_code == 201
+    assert client.get(f"/worlds/{wid}/dm/faction-clocks").json()["clocks"][0]["title"] == "Court Collection"
+
+    impact = client.post(f"/worlds/{wid}/dm/sessions/{sid}/impact-review", json={})
+    assert impact.status_code == 200
+    assert impact.json()["suggestion"]["source_type"] == "dm"
+    assert impact.json()["suggestion"]["source_id"] == sid
+    assert client.get(f"/worlds/{wid}/suggestions").json()["suggestions"] == []
+    assert len(client.get(f"/worlds/{wid}/dm/suggestions").json()["suggestions"]) == 1
+
+    exported = client.get(f"/worlds/{wid}/dm/export/markdown", params={"preset": "dm_campaign_brief"})
+    assert exported.status_code == 200
+    assert exported.json()["preset"] == "dm_campaign_brief"
+    assert "Lantern Debt" in exported.json()["content"]
 
 
 def test_saved_draft_crud_and_check_history(client: TestClient) -> None:

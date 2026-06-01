@@ -1,11 +1,8 @@
-import { Activity, ClipboardCheck, Clock, FileText, Flag, Sparkles } from 'lucide-react';
+import { Activity, ClipboardCheck, Clock, FileText, Sparkles } from 'lucide-react';
 import type {
-  CampaignSession,
   ConsistencyIssueState,
   DraftPassage,
-  FactionClock,
   GenerationSuggestion,
-  LoreNote,
   PlanningCard,
   TimelineEvent,
 } from '../../../lib/api';
@@ -22,9 +19,6 @@ export function WorldDetailDashboardPanel({
   timelineEvents,
   recentTimelineEvents,
   nextPlanningCards,
-  recentCampaignSessions,
-  recentLoreNotes,
-  activeFactionClocks,
   busy,
   onViewChange,
   onRunReport,
@@ -38,9 +32,6 @@ export function WorldDetailDashboardPanel({
   timelineEvents: TimelineEvent[];
   recentTimelineEvents: TimelineEvent[];
   nextPlanningCards: PlanningCardSummary[];
-  recentCampaignSessions: CampaignSession[];
-  recentLoreNotes: LoreNote[];
-  activeFactionClocks: FactionClock[];
   busy: boolean;
   onViewChange: (view: WorkspaceView) => void;
   onRunReport: () => void;
@@ -185,43 +176,6 @@ export function WorldDetailDashboardPanel({
                   <span>{card.lane}</span>
                   <strong>{card.title}</strong>
                   <small>{card.boardName}</small>
-                </button>
-              ))}
-            </div>
-          )}
-        </article>
-
-        <article className="dashboard-card">
-          <div className="dashboard-card-header">
-            <Flag size={18} />
-            <h3>Campaign Notes</h3>
-            <button className="btn btn-secondary compact-button" type="button" onClick={() => onViewChange('campaign')}>
-              Open
-            </button>
-          </div>
-          {recentCampaignSessions.length === 0 && recentLoreNotes.length === 0 && activeFactionClocks.length === 0 ? (
-            <p className="text-muted">No campaign sessions, notes, or active clocks yet.</p>
-          ) : (
-            <div className="dashboard-list">
-              {recentCampaignSessions.map((session) => (
-                <button className="dashboard-list-item" key={session.id} type="button" onClick={() => onViewChange('campaign')}>
-                  <span>Session {session.session_number}</span>
-                  <strong>{session.title}</strong>
-                  <small>{session.updated_at ? formatDateTime(session.updated_at) : 'Campaign session'}</small>
-                </button>
-              ))}
-              {recentLoreNotes.map((note) => (
-                <button className="dashboard-list-item" key={note.id} type="button" onClick={() => onViewChange('campaign')}>
-                  <span>{note.visibility.replace('_', ' ')}</span>
-                  <strong>{note.title}</strong>
-                  <small>{formatDateTime(note.updated_at)}</small>
-                </button>
-              ))}
-              {activeFactionClocks.map((clock) => (
-                <button className="dashboard-list-item" key={clock.id} type="button" onClick={() => onViewChange('campaign')}>
-                  <span>{clock.status}</span>
-                  <strong>{clock.title}</strong>
-                  <small>{clock.filled_segments}/{clock.segments} segments</small>
                 </button>
               ))}
             </div>

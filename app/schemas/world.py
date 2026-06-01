@@ -203,7 +203,7 @@ class GenerationSuggestionRead(GenerationSuggestionCreate):
     status: Literal["pending", "accepted", "discarded"]
     created_at: datetime
     candidate_kind: Literal["entity", "relationship", "timeline_event", "lore_note"] | None = None
-    source_type: Literal["draft", "generation", "session"] | None = None
+    source_type: Literal["draft", "generation", "session", "dm"] | None = None
     source_id: UUID | None = None
     source_excerpt: str | None = None
     payload: dict[str, object] | None = None

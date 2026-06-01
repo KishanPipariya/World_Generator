@@ -1,6 +1,6 @@
-import { Activity, ClipboardCheck, Clock, FileText, Flag, Network, Pencil } from 'lucide-react';
+import { Activity, ClipboardCheck, Clock, FileText, Network, Pencil } from 'lucide-react';
 
-export type WorkspaceView = 'dashboard' | 'canon' | 'drafts' | 'timeline' | 'planning' | 'campaign' | 'graph';
+export type WorkspaceView = 'dashboard' | 'canon' | 'drafts' | 'timeline' | 'planning' | 'graph';
 
 const tabs: { id: WorkspaceView; label: string; icon: typeof Activity }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
@@ -9,7 +9,6 @@ const tabs: { id: WorkspaceView; label: string; icon: typeof Activity }[] = [
   { id: 'timeline', label: 'Timeline', icon: Clock },
   { id: 'planning', label: 'Planning', icon: ClipboardCheck },
   { id: 'graph', label: 'Graph', icon: Network },
-  { id: 'campaign', label: 'Campaign', icon: Flag },
 ];
 
 export function WorkspaceTabs({

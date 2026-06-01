@@ -1,4 +1,4 @@
-import { BookOpen, Clock, Trash2 } from 'lucide-react';
+import { BookOpen, Clock, Shield, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { World } from '../../lib/api';
 import { Badge } from '../atoms';
@@ -24,6 +24,10 @@ export function WorldCard({ world, onDelete }: { world: World; onDelete: (world:
         <Link to={`/wiki/${world.id}`} className="world-card-action">
           <BookOpen size={16} aria-hidden="true" />
           <span>Wiki</span>
+        </Link>
+        <Link to={`/worlds/${world.id}/dm`} className="world-card-action">
+          <Shield size={16} aria-hidden="true" />
+          <span>DM</span>
         </Link>
         <button className="text-danger-button" type="button" onClick={() => onDelete(world)}>
           <Trash2 size={15} aria-hidden="true" />
