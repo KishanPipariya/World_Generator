@@ -14,14 +14,15 @@ import {
   Flag,
   Link2,
   Network,
-  Pencil,
   Plus,
   RefreshCcw,
   Save,
-  Search,
   Sparkles,
   Trash2,
 } from 'lucide-react';
+import { EntityBrowser } from '../components/organisms/worldDetail/EntityBrowser';
+import { WorldDetailDashboardPanel } from '../components/organisms/worldDetail/WorldDetailDashboardPanel';
+import { WorkspaceTabs, type WorkspaceView } from '../components/organisms/worldDetail/WorkspaceTabs';
 import {
   applySuggestion,
   createCampaignImpactReview,
@@ -86,6 +87,7 @@ import {
   type World,
 } from '../lib/api';
 import { buildWorldGraph, searchWorldGraph } from '../lib/worldGraph';
+import { displayEntityType as displayType, formatDateTime } from '../utils/format';
 import './WorldDetail.css';
 
 const WorldGraphView = lazy(() => import('./WorldGraphView'));
@@ -141,7 +143,6 @@ const PROMPTS = [
 
 type EntityForm = Pick<Entity, 'name' | 'entity_type' | 'description' | 'structured_fields'>;
 type DraftForm = Pick<DraftPassage, 'title' | 'body' | 'status' | 'linked_entity_ids' | 'linked_relationship_ids' | 'linked_timeline_event_ids'>;
-type WorkspaceView = 'dashboard' | 'canon' | 'drafts' | 'timeline' | 'planning' | 'campaign' | 'graph';
 
 type EditableDraftCandidate = Omit<DraftExtractionCandidate, 'payload'> & {
   payloadText: string;
@@ -162,23 +163,6 @@ const blankDraft: DraftForm = {
   linked_relationship_ids: [],
   linked_timeline_event_ids: [],
 };
-
-const displayType = (type: string) => {
-  const normalized = type.trim().toLowerCase();
-  if (['character', 'person', 'historical figure'].includes(normalized)) return 'Character';
-  if (['location', 'city', 'region', 'landmark', 'continent'].includes(normalized)) return 'Location';
-  if (['faction', 'guild', 'kingdom', 'organization'].includes(normalized)) return 'Faction';
-  if (['concept', 'magic system', 'technology', 'term'].includes(normalized)) return 'Concept';
-  if (['event', 'historical event', 'battle'].includes(normalized)) return 'Event';
-  return 'Other';
-};
-
-const formatDateTime = (value: string) => new Date(value).toLocaleString(undefined, {
-  month: 'short',
-  day: 'numeric',
-  hour: 'numeric',
-  minute: '2-digit',
-});
 
 const WorldDetail = () => {
   const { id } = useParams<{ id: string }>();
@@ -1778,333 +1762,43 @@ const WorldDetail = () => {
       )}
 
       <div className="workspace-grid">
-        <aside className="entity-browser glass" aria-label="World bible entity browser">
-          <div className="panel-title">
-            <BookOpen size={18} />
-            <h2>World Bible</h2>
-            <button
-              className="icon-button"
-              type="button"
-              onClick={() => {
-                if (selectEntity(null)) setActiveView('canon');
-              }}
-              title="New entity"
-              aria-label="Create new entity"
-            >
-              <Plus size={18} />
-            </button>
-          </div>
-          <label className="entity-search">
-            <Search size={16} />
-            <input
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search this world"
-              type="search"
-            />
-          </label>
-          {entities.length === 0 ? (
-            <p className="text-muted">No saved entities yet.</p>
-          ) : searchResult.query && searchResult.filteredEntities.length === 0 ? (
-            <p className="text-muted">No matches in this world.</p>
-          ) : (
-            groupedEntities.map(({ group, items }) => (
-              items.length > 0 && (
-                <div className="entity-group" key={group}>
-                  <h3>{group}</h3>
-                  {items.map((entity) => (
-                    <button
-                      className={[
-                        'entity-list-item',
-                        selectedEntityId === entity.id ? 'active' : '',
-                        searchResult.matchingEntityIds.has(entity.id) ? 'search-match' : '',
-                      ].filter(Boolean).join(' ')}
-                      key={entity.id}
-                      onClick={() => {
-                        if (selectEntity(entity.id)) setActiveView('canon');
-                      }}
-                      type="button"
-                    >
-                      <span>{entity.name}</span>
-                      <small>{entity.entity_type}</small>
-                    </button>
-                  ))}
-                </div>
-              )
-            ))
-          )}
-        </aside>
+        <EntityBrowser
+          groupedEntities={groupedEntities}
+          entityCount={entities.length}
+          query={searchResult.query}
+          selectedEntityId={selectedEntityId}
+          matchingEntityIds={searchResult.matchingEntityIds}
+          filteredCount={searchResult.filteredEntities.length}
+          onQueryChange={setSearchQuery}
+          onNewEntity={() => {
+            if (selectEntity(null)) setActiveView('canon');
+          }}
+          onSelectEntity={(entityId) => {
+            if (selectEntity(entityId)) setActiveView('canon');
+          }}
+        />
 
         <div className="editor-stack">
-          <div className="workspace-tabs glass" role="tablist" aria-label="Workspace views">
-            <button
-              className={activeView === 'dashboard' ? 'active' : ''}
-              onClick={() => setActiveView('dashboard')}
-              type="button"
-              role="tab"
-              aria-selected={activeView === 'dashboard'}
-              aria-controls="dashboard-panel"
-              id="dashboard-tab"
-            >
-              <Activity size={16} />
-              Dashboard
-            </button>
-            <button
-              className={activeView === 'canon' ? 'active' : ''}
-              onClick={() => setActiveView('canon')}
-              type="button"
-              role="tab"
-              aria-selected={activeView === 'canon'}
-              aria-controls="canon-panel"
-              id="canon-tab"
-            >
-              <Pencil size={16} />
-              Canon
-            </button>
-            <button
-              className={activeView === 'drafts' ? 'active' : ''}
-              onClick={() => setActiveView('drafts')}
-              type="button"
-              role="tab"
-              aria-selected={activeView === 'drafts'}
-              aria-controls="drafts-panel"
-              id="drafts-tab"
-            >
-              <FileText size={16} />
-              Drafts
-            </button>
-            <button
-              className={activeView === 'timeline' ? 'active' : ''}
-              onClick={() => setActiveView('timeline')}
-              type="button"
-              role="tab"
-              aria-selected={activeView === 'timeline'}
-              aria-controls="timeline-panel"
-              id="timeline-tab"
-            >
-              <Clock size={16} />
-              Timeline
-            </button>
-            <button
-              className={activeView === 'planning' ? 'active' : ''}
-              onClick={() => setActiveView('planning')}
-              type="button"
-              role="tab"
-              aria-selected={activeView === 'planning'}
-              aria-controls="planning-panel"
-              id="planning-tab"
-            >
-              <ClipboardCheck size={16} />
-              Planning
-            </button>
-            <button
-              className={activeView === 'graph' ? 'active' : ''}
-              onClick={() => setActiveView('graph')}
-              type="button"
-              role="tab"
-              aria-selected={activeView === 'graph'}
-              aria-controls="graph-panel"
-              id="graph-tab"
-            >
-              <Network size={16} />
-              Graph
-            </button>
-            <button
-              className={activeView === 'campaign' ? 'active' : ''}
-              onClick={() => setActiveView('campaign')}
-              type="button"
-              role="tab"
-              aria-selected={activeView === 'campaign'}
-              aria-controls="campaign-panel"
-              id="campaign-tab"
-            >
-              <Flag size={16} />
-              Campaign
-            </button>
-          </div>
+          <WorkspaceTabs activeView={activeView} onChange={setActiveView} />
 
           {activeView === 'dashboard' ? (
-            <section className="glass content-section dashboard-panel" id="dashboard-panel" role="tabpanel" aria-labelledby="dashboard-tab">
-              <div className="section-header">
-                <Activity className="text-primary" />
-                <h2>World Dashboard</h2>
-                <span className="review-badge">{pendingSuggestions.length + openIssueStates.length} review items</span>
-              </div>
-
-              <div className="dashboard-stats" aria-label="World workspace summary">
-                <button className="dashboard-stat" type="button" onClick={() => setActiveView('canon')}>
-                  <span>{openIssueStates.length}</span>
-                  <strong>Open issues</strong>
-                </button>
-                <button className="dashboard-stat" type="button" onClick={() => setActiveView('drafts')}>
-                  <span>{drafts.length}</span>
-                  <strong>Drafts</strong>
-                </button>
-                <button className="dashboard-stat" type="button" onClick={() => setActiveView('timeline')}>
-                  <span>{timelineEvents.length}</span>
-                  <strong>Timeline</strong>
-                </button>
-                <button className="dashboard-stat" type="button" onClick={() => setActiveView('planning')}>
-                  <span>{nextPlanningCards.length}</span>
-                  <strong>Planning cards</strong>
-                </button>
-              </div>
-
-              <div className="dashboard-grid">
-                <article className="dashboard-card">
-                  <div className="dashboard-card-header">
-                    <ClipboardCheck size={18} />
-                    <h3>Canon Review</h3>
-                    <button className="btn btn-secondary compact-button" type="button" onClick={handleConsistencyReport} disabled={busy}>
-                      Run Report
-                    </button>
-                  </div>
-                  {openIssueStates.length === 0 ? (
-                    <p className="text-muted">No persisted open issues. Run a report to refresh canon health.</p>
-                  ) : (
-                    <div className="dashboard-list">
-                      {openIssueStates.slice(0, 3).map((issue) => (
-                        <button className="dashboard-list-item" key={issue.id} type="button" onClick={() => handleIssueStateSelect(issue)}>
-                          <span>{issue.severity}</span>
-                          <strong>{issue.message}</strong>
-                          <small>{issue.code.replaceAll('_', ' ')} · {formatDateTime(issue.last_seen)}</small>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </article>
-
-                <article className="dashboard-card">
-                  <div className="dashboard-card-header">
-                    <Sparkles size={18} />
-                    <h3>Suggestion Inbox</h3>
-                    <span className="dashboard-count">{pendingSuggestions.length}</span>
-                  </div>
-                  {pendingSuggestions.length === 0 ? (
-                    <p className="text-muted">No pending suggestions.</p>
-                  ) : (
-                    <div className="dashboard-list">
-                      {pendingSuggestions.slice(0, 3).map((suggestion) => (
-                        <button className="dashboard-list-item" key={suggestion.id} type="button" onClick={() => setActiveView(suggestion.source_type === 'draft' ? 'drafts' : 'canon')}>
-                          <span>{(suggestion.candidate_kind ?? 'entity').replace('_', ' ')}</span>
-                          <strong>{suggestion.suggested_name || 'Generated lore'}</strong>
-                          <small>{suggestion.source_type ?? 'generation'} · {formatDateTime(suggestion.created_at)}</small>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </article>
-
-                <article className="dashboard-card">
-                  <div className="dashboard-card-header">
-                    <FileText size={18} />
-                    <h3>Recent Drafts</h3>
-                    <button className="btn btn-secondary compact-button" type="button" onClick={() => setActiveView('drafts')}>
-                      Open
-                    </button>
-                  </div>
-                  {recentDrafts.length === 0 ? (
-                    <p className="text-muted">No saved drafts yet.</p>
-                  ) : (
-                    <div className="dashboard-list">
-                      {recentDrafts.map((draft) => (
-                        <button className="dashboard-list-item" key={draft.id} type="button" onClick={() => {
-                          handleDraftSelect(draft.id);
-                          setActiveView('drafts');
-                        }}>
-                          <span>{draft.status}</span>
-                          <strong>{draft.title}</strong>
-                          <small>{draft.check_history.length} check{draft.check_history.length === 1 ? '' : 's'} · {formatDateTime(draft.updated_at)}</small>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </article>
-
-                <article className="dashboard-card">
-                  <div className="dashboard-card-header">
-                    <Clock size={18} />
-                    <h3>Timeline Changes</h3>
-                    <button className="btn btn-secondary compact-button" type="button" onClick={() => setActiveView('timeline')}>
-                      Open
-                    </button>
-                  </div>
-                  {recentTimelineEvents.length === 0 ? (
-                    <p className="text-muted">No timeline events yet.</p>
-                  ) : (
-                    <div className="dashboard-list">
-                      {recentTimelineEvents.map((event) => (
-                        <button className="dashboard-list-item" key={event.id} type="button" onClick={() => setActiveView('timeline')}>
-                          <span>#{event.event_order}</span>
-                          <strong>{event.title}</strong>
-                          <small>{[event.era_label, event.date_label].filter(Boolean).join(' / ') || `${event.participants.length} linked participant${event.participants.length === 1 ? '' : 's'}`}</small>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </article>
-
-                <article className="dashboard-card">
-                  <div className="dashboard-card-header">
-                    <ClipboardCheck size={18} />
-                    <h3>Next Planning Cards</h3>
-                    <button className="btn btn-secondary compact-button" type="button" onClick={() => setActiveView('planning')}>
-                      Open
-                    </button>
-                  </div>
-                  {nextPlanningCards.length === 0 ? (
-                    <p className="text-muted">No planning cards yet.</p>
-                  ) : (
-                    <div className="dashboard-list">
-                      {nextPlanningCards.map((card) => (
-                        <button className="dashboard-list-item" key={card.id} type="button" onClick={() => setActiveView('planning')}>
-                          <span>{card.lane}</span>
-                          <strong>{card.title}</strong>
-                          <small>{card.boardName}</small>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </article>
-
-                <article className="dashboard-card">
-                  <div className="dashboard-card-header">
-                    <Flag size={18} />
-                    <h3>Campaign Notes</h3>
-                    <button className="btn btn-secondary compact-button" type="button" onClick={() => setActiveView('campaign')}>
-                      Open
-                    </button>
-                  </div>
-                  {recentCampaignSessions.length === 0 && recentLoreNotes.length === 0 && activeFactionClocks.length === 0 ? (
-                    <p className="text-muted">No campaign sessions, notes, or active clocks yet.</p>
-                  ) : (
-                    <div className="dashboard-list">
-                      {recentCampaignSessions.map((session) => (
-                        <button className="dashboard-list-item" key={session.id} type="button" onClick={() => setActiveView('campaign')}>
-                          <span>Session {session.session_number}</span>
-                          <strong>{session.title}</strong>
-                          <small>{session.updated_at ? formatDateTime(session.updated_at) : 'Campaign session'}</small>
-                        </button>
-                      ))}
-                      {recentLoreNotes.map((note) => (
-                        <button className="dashboard-list-item" key={note.id} type="button" onClick={() => setActiveView('campaign')}>
-                          <span>{note.visibility.replace('_', ' ')}</span>
-                          <strong>{note.title}</strong>
-                          <small>{formatDateTime(note.updated_at)}</small>
-                        </button>
-                      ))}
-                      {activeFactionClocks.map((clock) => (
-                        <button className="dashboard-list-item" key={clock.id} type="button" onClick={() => setActiveView('campaign')}>
-                          <span>{clock.status}</span>
-                          <strong>{clock.title}</strong>
-                          <small>{clock.filled_segments}/{clock.segments} segments</small>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </article>
-              </div>
-            </section>
+            <WorldDetailDashboardPanel
+              pendingSuggestions={pendingSuggestions}
+              openIssueStates={openIssueStates}
+              drafts={drafts}
+              recentDrafts={recentDrafts}
+              timelineEvents={timelineEvents}
+              recentTimelineEvents={recentTimelineEvents}
+              nextPlanningCards={nextPlanningCards}
+              recentCampaignSessions={recentCampaignSessions}
+              recentLoreNotes={recentLoreNotes}
+              activeFactionClocks={activeFactionClocks}
+              busy={busy}
+              onViewChange={setActiveView}
+              onRunReport={handleConsistencyReport}
+              onIssueSelect={handleIssueStateSelect}
+              onDraftSelect={handleDraftSelect}
+            />
           ) : activeView === 'drafts' ? (
             <>
               <section className="glass content-section" id="drafts-panel" role="tabpanel" aria-labelledby="drafts-tab">

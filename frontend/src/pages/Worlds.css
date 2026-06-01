@@ -35,24 +35,6 @@
   flex-wrap: wrap;
 }
 
-.loading-state {
-  text-align: center;
-  padding: 4rem;
-  color: var(--text-secondary);
-}
-
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1rem;
-  padding: 4rem;
-  text-align: center;
-  border-radius: var(--radius-lg);
-  border-style: dashed;
-}
-
 .worlds-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -95,53 +77,12 @@
   color: var(--text-primary);
 }
 
-.icon-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 2rem;
-  height: 2rem;
-  flex: 0 0 auto;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.icon-button:hover {
-  color: var(--text-primary);
-  border-color: rgba(255, 255, 255, 0.3);
-}
-
-.icon-button.danger:hover {
-  color: #fecaca;
-  border-color: rgba(239, 68, 68, 0.45);
-  background: rgba(239, 68, 68, 0.12);
-}
-
 .world-card-body {
   flex: 1;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
   color: inherit;
-}
-
-.badge {
-  display: inline-block;
-  padding: 0.25rem 0.75rem;
-  border-radius: var(--radius-full);
-  font-size: 0.8rem;
-  font-weight: 500;
-  text-transform: capitalize;
-  width: max-content;
-}
-
-.badge-primary {
-  background: rgba(124, 58, 237, 0.15);
-  color: #a78bfa;
 }
 
 .world-era {

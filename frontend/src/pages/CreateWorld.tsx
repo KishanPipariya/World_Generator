@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Alert, Button, TextInput, Textarea } from '../components/atoms';
 import { createWorld } from '../lib/api';
 import './CreateWorld.css';
 
@@ -49,16 +50,14 @@ const CreateWorld = () => {
       </div>
 
       {errorMessage && (
-        <div className="workspace-alert error" role="alert">
-          {errorMessage}
-        </div>
+        <Alert>{errorMessage}</Alert>
       )}
 
       <form className="glass create-form" onSubmit={handleSubmit} aria-describedby="create-world-help">
         <p id="create-world-help" className="form-help">Required fields are marked with an asterisk.</p>
         <div className="form-group">
           <label htmlFor="title">World Title <span className="required">*</span></label>
-          <input 
+          <TextInput
             type="text" 
             id="title" 
             name="title" 
@@ -67,56 +66,52 @@ const CreateWorld = () => {
             placeholder="e.g., The Ashen Wastes, Chronos Prime" 
             required 
             aria-required="true"
-            className="form-input"
           />
         </div>
 
         <div className="form-group">
           <label htmlFor="tone">Tone</label>
-          <input 
+          <TextInput
             type="text" 
             id="tone" 
             name="tone" 
             value={formData.tone} 
             onChange={handleChange} 
             placeholder="e.g., Grimdark, High Fantasy, Cyberpunk noir" 
-            className="form-input"
           />
         </div>
 
         <div className="form-group">
           <label htmlFor="era_notes">Era Notes</label>
-          <textarea 
+          <Textarea
             id="era_notes" 
             name="era_notes" 
             value={formData.era_notes} 
             onChange={handleChange} 
             placeholder="Describe the current state of the world, major events, or historical context..." 
             rows={5}
-            className="form-input"
           />
         </div>
 
         <div className="form-group">
           <label htmlFor="seed">Seed</label>
-          <input 
+          <TextInput
             type="text" 
             id="seed" 
             name="seed" 
             value={formData.seed} 
             onChange={handleChange} 
             placeholder="Random seed or specific prompt seed for generation" 
-            className="form-input"
           />
         </div>
 
         <div className="form-actions">
-          <button type="button" className="btn btn-secondary" onClick={() => navigate('/worlds')}>
+          <Button variant="secondary" onClick={() => navigate('/worlds')}>
             Cancel
-          </button>
-          <button type="submit" className="btn btn-primary" disabled={loading || !formData.title}>
+          </Button>
+          <Button type="submit" variant="primary" disabled={loading || !formData.title}>
             {loading ? 'Forging...' : 'Create World'}
-          </button>
+          </Button>
         </div>
       </form>
     </div>

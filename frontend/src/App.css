@@ -50,22 +50,6 @@
   font-size: 0.92rem;
 }
 
-.icon-button {
-  display: inline-grid;
-  place-items: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-}
-
-.icon-button:hover {
-  color: var(--text-primary);
-  border-color: var(--text-muted);
-}
-
 .main-content {
   flex: 1;
   padding: 2rem;
@@ -166,38 +150,4 @@
   .main-content {
     padding: 1rem;
   }
-}
-
-/* Buttons */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  padding: 0.75rem 1.5rem;
-  border-radius: var(--radius-md);
-  font-weight: 600;
-  transition: all var(--transition-fast);
-}
-
-.btn-primary {
-  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-  color: white;
-  box-shadow: 0 4px 14px 0 rgba(124, 58, 237, 0.39);
-}
-
-.btn-primary:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px 0 rgba(124, 58, 237, 0.5);
-}
-
-.btn-secondary {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  border: 1px solid var(--border-color);
-}
-
-.btn-secondary:hover {
-  background: var(--bg-secondary);
-  border-color: var(--text-muted);
 }
