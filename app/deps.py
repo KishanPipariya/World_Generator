@@ -1,15 +1,11 @@
-from neo4j import GraphDatabase
-
 from app.config import load_settings
 from app.services.auth_service import AuthService
 from app.services.llm_service import LLMService, build_llm_service
 from app.services.world_service import WorldService
+from app.sqlite_driver import SQLiteDriver
 
 _settings = load_settings()
-_driver = GraphDatabase.driver(
-    _settings.neo4j_uri, 
-    auth=(_settings.neo4j_user, _settings.neo4j_password)
-)
+_driver = SQLiteDriver(_settings.sqlite_path)
 _llm_service = build_llm_service()
 _world_service = WorldService(driver=_driver, llm=_llm_service)
 _auth_service = AuthService(driver=_driver)

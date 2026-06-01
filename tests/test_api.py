@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import tempfile
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -8,624 +11,19 @@ from app.main import app
 from app.schemas.auth import UserCreate
 from app.services.auth_service import AuthService
 from app.services.world_service import WorldService
+from app.sqlite_driver import SQLiteDriver
+
+_active_driver: SQLiteDriver | None = None
 
 
-class _FakeResult:
-    def __init__(self, records):
-        self._records = records
-    
-    def single(self):
-        return self._records[0] if self._records else None
-        
-    def __iter__(self):
-        return iter(self._records)
-
-class _FakeSession:
-    def __init__(self, db):
-        self.db = db
-        
-    def __enter__(self):
-        return self
-        
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        pass
-        
-    def run(self, query, **kwargs):
-        if "CREATE CONSTRAINT" in query or "CREATE INDEX" in query:
-            return _FakeResult([])
-        if "MATCH (u:User)" in query and "RETURN count(u) AS count" in query:
-            return _FakeResult([{"count": len(self.db["users"])}])
-        if "CREATE (u:User" in query:
-            record = {
-                "id": kwargs["id"],
-                "username": kwargs["username"],
-                "email": kwargs["email"],
-                "password_hash": kwargs["password_hash"],
-                "created_at": kwargs["created_at"],
-            }
-            self.db["users"][kwargs["id"]] = record
-            return _FakeResult([{"props": record}])
-        if "MATCH (u:User {id: $id})" in query:
-            record = self.db["users"].get(kwargs["id"])
-            return _FakeResult([{"props": record}] if record else [])
-        if "MATCH (u:User)" in query and "u.username = $username OR u.email = $email" in query:
-            record = next(
-                (
-                    user
-                    for user in self.db["users"].values()
-                    if user["username"] == kwargs["username"] or user["email"] == kwargs["email"]
-                ),
-                None,
-            )
-            return _FakeResult([{"props": record}] if record else [])
-        if "MATCH (w:World)" in query and "w.owner_id IS NULL" in query:
-            assigned = 0
-            for world in self.db["worlds"].values():
-                if world.get("owner_id") is None:
-                    world["owner_id"] = kwargs["owner_id"]
-                    assigned += 1
-            return _FakeResult([{"assigned": assigned}])
-        if "CREATE (w:World" in query:
-            self.db["worlds"][kwargs["id"]] = kwargs
-            return _FakeResult([kwargs])
-        if "CREATE (w)<-[:BELONGS_TO]-(e:Entity" in query:
-            if kwargs["w_id"] not in self.db["worlds"]:
-                return _FakeResult([])
-            record = {
-                "id": kwargs["e_id"],
-                "world_id": kwargs["w_id"],
-                "name": kwargs["name"],
-                "entity_type": kwargs["entity_type"],
-                "description": kwargs["description"],
-                "structured_fields_json": kwargs.get("structured_fields_json", "{}"),
-                "created_at": kwargs["created_at"],
-            }
-            self.db["entities"][kwargs["e_id"]] = record
-            return _FakeResult([record])
-        if "CREATE (w)<-[:BELONGS_TO]-(s:CanonSuggestion" in query:
-            if kwargs["w_id"] not in self.db["worlds"]:
-                return _FakeResult([])
-            record = {
-                "id": kwargs["s_id"],
-                "world_id": kwargs["w_id"],
-                "instruction": kwargs["instruction"],
-                "content": kwargs["content"],
-                "suggested_name": kwargs["suggested_name"],
-                "suggested_type": kwargs["suggested_type"],
-                "candidate_kind": kwargs.get("candidate_kind"),
-                "source_type": kwargs.get("source_type"),
-                "source_id": kwargs.get("source_id"),
-                "source_excerpt": kwargs.get("source_excerpt"),
-                "payload_json": kwargs.get("payload_json", "{}"),
-                "status": "pending",
-                "created_at": kwargs["created_at"],
-            }
-            self.db["suggestions"][kwargs["s_id"]] = record
-            return _FakeResult([{"props": record}])
-        if "CREATE (w)<-[:BELONGS_TO]-(i:CanonIssue" in query:
-            if kwargs["w_id"] not in self.db["worlds"]:
-                return _FakeResult([])
-            record = {
-                "id": kwargs["issue_id"],
-                "world_id": kwargs["w_id"],
-                "fingerprint": kwargs["fingerprint"],
-                "code": kwargs["code"],
-                "severity": kwargs["severity"],
-                "message": kwargs["message"],
-                "target_type": kwargs["target_type"],
-                "entity_id": kwargs["entity_id"],
-                "relationship_id": kwargs["relationship_id"],
-                "status": "open",
-                "note": kwargs["note"],
-                "first_seen": kwargs["first_seen"],
-                "last_seen": kwargs["last_seen"],
-                "updated_at": kwargs["updated_at"],
-            }
-            self.db["canon_issues"][kwargs["issue_id"]] = record
-            return _FakeResult([{"props": record}])
-        if "CREATE (w)<-[:BELONGS_TO]-(t:TimelineEvent" in query:
-            if kwargs["w_id"] not in self.db["worlds"]:
-                return _FakeResult([])
-            record = {
-                "id": kwargs["event_id"],
-                "world_id": kwargs["w_id"],
-                "title": kwargs["title"],
-                "event_order": kwargs["event_order"],
-                "description": kwargs["description"],
-                "participants_json": kwargs["participants_json"],
-                "causes": kwargs["causes"],
-                "consequences": kwargs["consequences"],
-                "date_label": kwargs.get("date_label"),
-                "era_label": kwargs.get("era_label"),
-                "depends_on_json": kwargs.get("depends_on_json", "[]"),
-                "created_at": kwargs["created_at"],
-            }
-            self.db["timeline"][kwargs["event_id"]] = record
-            return _FakeResult([{"props": record}])
-        if "CREATE (w)<-[:BELONGS_TO]-(d:DraftPassage" in query:
-            if kwargs["w_id"] not in self.db["worlds"]:
-                return _FakeResult([])
-            record = {
-                "id": kwargs["draft_id"],
-                "world_id": kwargs["w_id"],
-                "title": kwargs["title"],
-                "body": kwargs["body"],
-                "status": kwargs["status"],
-                "linked_entity_ids_json": kwargs["linked_entity_ids_json"],
-                "linked_relationship_ids_json": kwargs["linked_relationship_ids_json"],
-                "linked_timeline_event_ids_json": kwargs["linked_timeline_event_ids_json"],
-                "check_history_json": kwargs["check_history_json"],
-                "created_at": kwargs["created_at"],
-                "updated_at": kwargs["updated_at"],
-            }
-            self.db["drafts"][kwargs["draft_id"]] = record
-            return _FakeResult([{"props": record}])
-        if "CREATE (w)<-[:BELONGS_TO]-(v:GraphView" in query:
-            if kwargs["w_id"] not in self.db["worlds"]:
-                return _FakeResult([])
-            record = {
-                "id": kwargs["view_id"],
-                "world_id": kwargs["w_id"],
-                "name": kwargs["name"],
-                "layout_mode": kwargs["layout_mode"],
-                "filters_json": kwargs["filters_json"],
-                "camera_json": kwargs["camera_json"],
-                "node_positions_json": kwargs["node_positions_json"],
-                "created_at": kwargs["created_at"],
-                "updated_at": kwargs["updated_at"],
-            }
-            self.db["graph_views"][kwargs["view_id"]] = record
-            return _FakeResult([{"props": record}])
-        if "CREATE (w)<-[:BELONGS_TO]-(b:PlanningBoard" in query:
-            if kwargs["w_id"] not in self.db["worlds"]:
-                return _FakeResult([])
-            record = {
-                "id": kwargs["board_id"],
-                "world_id": kwargs["w_id"],
-                "name": kwargs["name"],
-                "board_type": kwargs["board_type"],
-                "created_at": kwargs["created_at"],
-            }
-            self.db["planning_boards"][kwargs["board_id"]] = record
-            return _FakeResult([{"props": record}])
-        if "CREATE (b)<-[:BELONGS_TO]-(c:PlanningCard" in query:
-            if kwargs["board_id"] not in self.db["planning_boards"]:
-                return _FakeResult([])
-            record = {
-                "id": kwargs["card_id"],
-                "board_id": kwargs["board_id"],
-                "world_id": kwargs["w_id"],
-                "title": kwargs["title"],
-                "description": kwargs["description"],
-                "lane": kwargs["lane"],
-                "position": kwargs["position"],
-                "entity_links_json": kwargs["entity_links_json"],
-                "relationship_links_json": kwargs["relationship_links_json"],
-                "timeline_event_links_json": kwargs["timeline_event_links_json"],
-                "created_at": kwargs["created_at"],
-            }
-            self.db["planning_cards"][kwargs["card_id"]] = record
-            return _FakeResult([{"props": record}])
-        if "CREATE (w)<-[:BELONGS_TO]-(cs:CampaignSession" in query:
-            if kwargs["w_id"] not in self.db["worlds"]:
-                return _FakeResult([])
-            record = {
-                "id": kwargs["session_id"],
-                "world_id": kwargs["w_id"],
-                "session_number": kwargs["session_number"],
-                "title": kwargs["title"],
-                "played_date": kwargs["played_date"],
-                "in_world_date": kwargs["in_world_date"],
-                "recap": kwargs["recap"],
-                "player_actions": kwargs["player_actions"],
-                "consequences": kwargs["consequences"],
-                "linked_entity_ids_json": kwargs["linked_entity_ids_json"],
-                "linked_relationship_ids_json": kwargs["linked_relationship_ids_json"],
-                "linked_timeline_event_ids_json": kwargs["linked_timeline_event_ids_json"],
-                "created_at": kwargs["created_at"],
-                "updated_at": kwargs["updated_at"],
-            }
-            self.db["campaign_sessions"][kwargs["session_id"]] = record
-            return _FakeResult([{"props": record}])
-        if "CREATE (w)<-[:BELONGS_TO]-(ln:LoreNote" in query:
-            if kwargs["w_id"] not in self.db["worlds"]:
-                return _FakeResult([])
-            record = {
-                "id": kwargs["note_id"],
-                "world_id": kwargs["w_id"],
-                "title": kwargs["title"],
-                "body": kwargs["body"],
-                "subject_type": kwargs["subject_type"],
-                "subject_id": kwargs["subject_id"],
-                "visibility": kwargs["visibility"],
-                "truth_state": kwargs["truth_state"],
-                "reveal_condition": kwargs["reveal_condition"],
-                "handout_text": kwargs["handout_text"],
-                "created_at": kwargs["created_at"],
-                "updated_at": kwargs["updated_at"],
-            }
-            self.db["lore_notes"][kwargs["note_id"]] = record
-            return _FakeResult([{"props": record}])
-        if "CREATE (w)<-[:BELONGS_TO]-(fc:FactionClock" in query:
-            if kwargs["w_id"] not in self.db["worlds"]:
-                return _FakeResult([])
-            record = {
-                "id": kwargs["clock_id"],
-                "world_id": kwargs["w_id"],
-                "title": kwargs["title"],
-                "linked_entity_id": kwargs["linked_entity_id"],
-                "segments": kwargs["segments"],
-                "filled_segments": kwargs["filled_segments"],
-                "stakes": kwargs["stakes"],
-                "status": kwargs["status"],
-                "linked_session_ids_json": kwargs["linked_session_ids_json"],
-                "linked_entity_ids_json": kwargs["linked_entity_ids_json"],
-                "linked_relationship_ids_json": kwargs["linked_relationship_ids_json"],
-                "linked_timeline_event_ids_json": kwargs["linked_timeline_event_ids_json"],
-                "created_at": kwargs["created_at"],
-                "updated_at": kwargs["updated_at"],
-            }
-            self.db["faction_clocks"][kwargs["clock_id"]] = record
-            return _FakeResult([{"props": record}])
-        if "CREATE (r:RevisionVersion" in query:
-            record = {
-                "id": kwargs["revision_id"],
-                "world_id": kwargs["w_id"],
-                "entity_id": kwargs["entity_id"],
-                "subject_type": kwargs["subject_type"],
-                "field_name": kwargs["field_name"],
-                "previous_value": kwargs["previous_value"],
-                "new_value": kwargs["new_value"],
-                "source": kwargs["source"],
-                "created_at": kwargs["created_at"],
-            }
-            self.db["revisions"][kwargs["revision_id"]] = record
-            return _FakeResult([{"props": record}])
-        if "CREATE (source)-[r:RELATED_TO" in query:
-            source = self.db["entities"].get(kwargs["source_id"])
-            target = self.db["entities"].get(kwargs["target_id"])
-            if not source or not target or source["world_id"] != kwargs["w_id"] or target["world_id"] != kwargs["w_id"]:
-                return _FakeResult([])
-            rel = {
-                "id": kwargs["r_id"],
-                "world_id": kwargs["w_id"],
-                "relation_type": kwargs["relation_type"],
-                "notes": kwargs["notes"],
-                "category": kwargs.get("category"),
-                "strength": kwargs.get("strength"),
-                "history": kwargs.get("history"),
-                "stance": kwargs.get("stance"),
-                "color": kwargs.get("color"),
-                "display_priority": kwargs.get("display_priority"),
-                "created_at": kwargs["created_at"],
-            }
-            record = {
-                "rel_props": rel,
-                "source_props": source,
-                "target_props": target,
-            }
-            self.db["relationships"][kwargs["r_id"]] = record
-            return _FakeResult([record])
-        if "SET e.name" in query:
-            record = self.db["entities"].get(kwargs["e_id"])
-            if not record or record["world_id"] != kwargs["w_id"]:
-                return _FakeResult([])
-            for field in ("name", "entity_type", "description"):
-                if kwargs[field] is not None:
-                    record[field] = kwargs[field]
-            if kwargs.get("structured_fields_json") is not None:
-                record["structured_fields_json"] = kwargs["structured_fields_json"]
-            return _FakeResult([record])
-        if "SET s.status" in query:
-            record = self.db["suggestions"].get(kwargs["s_id"])
-            if record and record["world_id"] == kwargs["w_id"]:
-                record["status"] = kwargs["status"]
-                return _FakeResult([{"props": record}])
-            return _FakeResult([])
-        if "SET i.status = coalesce" in query:
-            record = self.db["canon_issues"].get(kwargs["issue_id"])
-            if record and record["world_id"] == kwargs["w_id"]:
-                if kwargs["status"] is not None:
-                    record["status"] = kwargs["status"]
-                if kwargs["note_is_set"]:
-                    record["note"] = kwargs["note"]
-                record["updated_at"] = kwargs["updated_at"]
-                return _FakeResult([{"props": record}])
-            return _FakeResult([])
-        if "SET i.code = $code" in query:
-            record = self.db["canon_issues"].get(kwargs["issue_id"])
-            if record:
-                for field in (
-                    "code",
-                    "severity",
-                    "message",
-                    "target_type",
-                    "entity_id",
-                    "relationship_id",
-                    "status",
-                    "last_seen",
-                    "updated_at",
-                ):
-                    record[field] = kwargs[field]
-                return _FakeResult([{"props": record}])
-            return _FakeResult([])
-        if "SET d.title" in query:
-            record = self.db["drafts"].get(kwargs["draft_id"])
-            if record and record["world_id"] == kwargs["w_id"]:
-                for field in ("title", "body", "status"):
-                    if kwargs[field] is not None:
-                        record[field] = kwargs[field]
-                for field in (
-                    "linked_entity_ids_json",
-                    "linked_relationship_ids_json",
-                    "linked_timeline_event_ids_json",
-                ):
-                    if kwargs[field] is not None:
-                        record[field] = kwargs[field]
-                record["updated_at"] = kwargs["updated_at"]
-                return _FakeResult([{"props": record}])
-            return _FakeResult([])
-        if "SET d.check_history_json" in query:
-            record = self.db["drafts"].get(kwargs["draft_id"])
-            if record and record["world_id"] == kwargs["w_id"]:
-                record["check_history_json"] = kwargs["check_history_json"]
-                record["updated_at"] = kwargs["updated_at"]
-                return _FakeResult([{"props": record}])
-            return _FakeResult([])
-        if "SET cs.session_number" in query:
-            record = self.db["campaign_sessions"].get(kwargs["session_id"])
-            if record and record["world_id"] == kwargs["w_id"]:
-                for field in (
-                    "session_number",
-                    "title",
-                    "played_date",
-                    "in_world_date",
-                    "recap",
-                    "player_actions",
-                    "consequences",
-                    "linked_entity_ids_json",
-                    "linked_relationship_ids_json",
-                    "linked_timeline_event_ids_json",
-                    "updated_at",
-                ):
-                    record[field] = kwargs[field]
-                return _FakeResult([{"props": record}])
-            return _FakeResult([])
-        if "SET ln.title" in query:
-            record = self.db["lore_notes"].get(kwargs["note_id"])
-            if record and record["world_id"] == kwargs["w_id"]:
-                for field in (
-                    "title",
-                    "body",
-                    "subject_type",
-                    "subject_id",
-                    "visibility",
-                    "truth_state",
-                    "reveal_condition",
-                    "handout_text",
-                    "updated_at",
-                ):
-                    record[field] = kwargs[field]
-                return _FakeResult([{"props": record}])
-            return _FakeResult([])
-        if "SET fc.title" in query:
-            record = self.db["faction_clocks"].get(kwargs["clock_id"])
-            if record and record["world_id"] == kwargs["w_id"]:
-                for field in (
-                    "title",
-                    "linked_entity_id",
-                    "segments",
-                    "filled_segments",
-                    "stakes",
-                    "status",
-                    "linked_session_ids_json",
-                    "linked_entity_ids_json",
-                    "linked_relationship_ids_json",
-                    "linked_timeline_event_ids_json",
-                    "updated_at",
-                ):
-                    record[field] = kwargs[field]
-                return _FakeResult([{"props": record}])
-            return _FakeResult([])
-        if "DETACH DELETE w" in query:
-            world = self.db["worlds"].pop(kwargs["w_id"], None)
-            if not world:
-                return _FakeResult([])
-            return _FakeResult([{"deleted": 1}])
-        if "DETACH DELETE e" in query:
-            entity_ids = {
-                entity_id
-                for entity_id, entity in self.db["entities"].items()
-                if entity["world_id"] == kwargs["w_id"]
-            }
-            self.db["entities"] = {
-                entity_id: entity
-                for entity_id, entity in self.db["entities"].items()
-                if entity_id not in entity_ids
-            }
-            self.db["relationships"] = {
-                relationship_id: relationship
-                for relationship_id, relationship in self.db["relationships"].items()
-                if relationship["rel_props"]["world_id"] != kwargs["w_id"]
-            }
-            return _FakeResult([])
-        if '"CanonIssue" IN labels(i)' in query and "DETACH DELETE i" in query:
-            self.db["canon_issues"] = {
-                issue_id: issue
-                for issue_id, issue in self.db["canon_issues"].items()
-                if issue["world_id"] != kwargs["w_id"]
-            }
-            return _FakeResult([])
-        if "DELETE linked, e" in query:
-            record = self.db["entities"].pop(kwargs["e_id"], None)
-            if not record or record["world_id"] != kwargs["w_id"]:
-                return _FakeResult([{"deleted": 0}])
-            self.db["relationships"] = {
-                rid: rel
-                for rid, rel in self.db["relationships"].items()
-                if (
-                    rel["source_props"]["id"] != kwargs["e_id"]
-                    and rel["target_props"]["id"] != kwargs["e_id"]
-                )
-            }
-            return _FakeResult([{"deleted": 1}])
-        if "DELETE r" in query:
-            record = self.db["relationships"].get(kwargs["r_id"])
-            if record and record["rel_props"]["world_id"] == kwargs["w_id"]:
-                del self.db["relationships"][kwargs["r_id"]]
-                return _FakeResult([{"deleted": 1}])
-            return _FakeResult([{"deleted": 0}])
-        if "DETACH DELETE v" in query:
-            record = self.db["graph_views"].get(kwargs["view_id"])
-            if record and record["world_id"] == kwargs["w_id"]:
-                del self.db["graph_views"][kwargs["view_id"]]
-                return _FakeResult([{"deleted": 1}])
-            return _FakeResult([{"deleted": 0}])
-        if "DETACH DELETE d" in query:
-            record = self.db["drafts"].get(kwargs["draft_id"])
-            if record and record["world_id"] == kwargs["w_id"]:
-                del self.db["drafts"][kwargs["draft_id"]]
-                return _FakeResult([{"deleted": 1}])
-            return _FakeResult([{"deleted": 0}])
-        if "DETACH DELETE cs" in query:
-            record = self.db["campaign_sessions"].get(kwargs["node_id"])
-            if record and record["world_id"] == kwargs["w_id"]:
-                del self.db["campaign_sessions"][kwargs["node_id"]]
-                return _FakeResult([{"deleted": 1}])
-            return _FakeResult([{"deleted": 0}])
-        if "DETACH DELETE ln" in query:
-            record = self.db["lore_notes"].get(kwargs["node_id"])
-            if record and record["world_id"] == kwargs["w_id"]:
-                del self.db["lore_notes"][kwargs["node_id"]]
-                return _FakeResult([{"deleted": 1}])
-            return _FakeResult([{"deleted": 0}])
-        if "DETACH DELETE fc" in query:
-            record = self.db["faction_clocks"].get(kwargs["node_id"])
-            if record and record["world_id"] == kwargs["w_id"]:
-                del self.db["faction_clocks"][kwargs["node_id"]]
-                return _FakeResult([{"deleted": 1}])
-            return _FakeResult([{"deleted": 0}])
-        if "id" in kwargs and "MATCH (w)<-[belongs]-(e)" in query:
-            return _FakeResult(
-                [v for v in self.db["entities"].values() if v["world_id"] == kwargs["id"]]
-            )
-        if "w_id" in kwargs and "MATCH (w)<-[belongs]-(e)" in query:
-            if kwargs["w_id"] not in self.db["worlds"]:
-                return _FakeResult([])
-            if "e_id" in kwargs:
-                rec = self.db["entities"].get(kwargs["e_id"])
-                return _FakeResult([rec] if rec and rec["world_id"] == kwargs["w_id"] else [])
-            return _FakeResult(
-                [v for v in self.db["entities"].values() if v["world_id"] == kwargs["w_id"]]
-            )
-        if "RELATED_TO {world_id: $w_id}" in query or 'type(r) = "RELATED_TO"' in query:
-            return _FakeResult(
-                [v for v in self.db["relationships"].values() if v["rel_props"]["world_id"] == kwargs["w_id"]]
-            )
-        if '"CanonSuggestion" IN labels' in query:
-            if "s_id" in kwargs:
-                record = self.db["suggestions"].get(kwargs["s_id"])
-                return _FakeResult([{"props": record}] if record and record["world_id"] == kwargs["w_id"] else [])
-            return _FakeResult(
-                [{"props": v} for v in self.db["suggestions"].values() if v["world_id"] == kwargs["w_id"]]
-            )
-        if '"CanonIssue" IN labels(i)' in query:
-            if "issue_id" in kwargs:
-                record = self.db["canon_issues"].get(kwargs["issue_id"])
-                return _FakeResult([{"props": record}] if record and record["world_id"] == kwargs["w_id"] else [])
-            return _FakeResult(
-                [{"props": v} for v in self.db["canon_issues"].values() if v["world_id"] == kwargs["w_id"]]
-            )
-        if '"TimelineEvent" IN labels' in query:
-            return _FakeResult(
-                [{"props": v} for v in self.db["timeline"].values() if v["world_id"] == kwargs["w_id"]]
-            )
-        if '"DraftPassage" IN labels' in query:
-            if "draft_id" in kwargs:
-                record = self.db["drafts"].get(kwargs["draft_id"])
-                return _FakeResult([{"props": record}] if record and record["world_id"] == kwargs["w_id"] else [])
-            return _FakeResult(
-                [{"props": v} for v in self.db["drafts"].values() if v["world_id"] == kwargs["w_id"]]
-            )
-        if '"GraphView" IN labels' in query:
-            return _FakeResult(
-                [{"props": v} for v in self.db["graph_views"].values() if v["world_id"] == kwargs["w_id"]]
-            )
-        if '"PlanningBoard" IN labels' in query and '"PlanningCard" IN labels' not in query:
-            return _FakeResult(
-                [{"props": v} for v in self.db["planning_boards"].values() if v["world_id"] == kwargs["w_id"]]
-            )
-        if '"PlanningCard" IN labels' in query:
-            return _FakeResult(
-                [
-                    {"props": v}
-                    for v in self.db["planning_cards"].values()
-                    if v["world_id"] == kwargs["w_id"] and v["board_id"] == kwargs["board_id"]
-                ]
-            )
-        if '"CampaignSession" IN labels(cs)' in query:
-            if "session_id" in kwargs:
-                record = self.db["campaign_sessions"].get(kwargs["session_id"])
-                return _FakeResult([{"props": record}] if record and record["world_id"] == kwargs["w_id"] else [])
-            return _FakeResult(
-                [{"props": v} for v in self.db["campaign_sessions"].values() if v["world_id"] == kwargs["w_id"]]
-            )
-        if '"LoreNote" IN labels(ln)' in query:
-            if "note_id" in kwargs:
-                record = self.db["lore_notes"].get(kwargs["note_id"])
-                return _FakeResult([{"props": record}] if record and record["world_id"] == kwargs["w_id"] else [])
-            return _FakeResult(
-                [{"props": v} for v in self.db["lore_notes"].values() if v["world_id"] == kwargs["w_id"]]
-            )
-        if '"FactionClock" IN labels(fc)' in query:
-            if "clock_id" in kwargs:
-                record = self.db["faction_clocks"].get(kwargs["clock_id"])
-                return _FakeResult([{"props": record}] if record and record["world_id"] == kwargs["w_id"] else [])
-            return _FakeResult(
-                [{"props": v} for v in self.db["faction_clocks"].values() if v["world_id"] == kwargs["w_id"]]
-            )
-        if '"RevisionVersion" IN labels' in query:
-            return _FakeResult(
-                [
-                    {"props": v}
-                    for v in self.db["revisions"].values()
-                    if v["world_id"] == kwargs["w_id"]
-                    and (kwargs.get("entity_id") is None or v["entity_id"] == kwargs["entity_id"])
-                ]
-            )
-        if "id: $id" in query or "properties(w).id = $id" in query:
-            rec = self.db["worlds"].get(kwargs["id"])
-            if rec and kwargs.get("owner_id") is not None and rec.get("owner_id") != kwargs["owner_id"]:
-                rec = None
-            return _FakeResult([{"props": rec}] if rec else [])
-        worlds = self.db["worlds"].values()
-        if kwargs.get("owner_id") is not None:
-            worlds = [world for world in worlds if world.get("owner_id") == kwargs["owner_id"]]
-        return _FakeResult([{"props": world} for world in worlds])
-
-class _FakeDriver:
-    def __init__(self):
-        self.db = {
-            "worlds": {},
-            "users": {},
-            "entities": {},
-            "relationships": {},
-            "suggestions": {},
-            "canon_issues": {},
-            "timeline": {},
-            "revisions": {},
-            "graph_views": {},
-            "planning_boards": {},
-            "planning_cards": {},
-            "campaign_sessions": {},
-            "lore_notes": {},
-            "faction_clocks": {},
-            "drafts": {},
-        }
-        
-    def session(self):
-        return _FakeSession(self.db)
-
+def _driver() -> SQLiteDriver:
+    fd, path = tempfile.mkstemp(suffix=".sqlite3")
+    os.close(fd)
+    driver = SQLiteDriver(path)
+    if _active_driver is not None:
+        for user in _active_driver._all("SELECT * FROM users"):
+            driver.create_user(user)
+    return driver
 
 
 class _HealthLLM:
@@ -651,13 +49,16 @@ class _JsonLLM(_HealthLLM):
 
 @pytest.fixture(autouse=True)
 def _override_services():
-    driver = _FakeDriver()
+    global _active_driver
+    driver = _driver()
+    _active_driver = driver
     fresh = WorldService(driver=driver, llm=_HealthLLM())
     app.dependency_overrides[get_world_service] = lambda: fresh
     app.dependency_overrides[get_auth_service] = lambda: AuthService(driver=driver)
     app.dependency_overrides[get_llm_service] = lambda: _HealthLLM()
     yield
     app.dependency_overrides.clear()
+    _active_driver = None
 
 
 def test_health_is_reduced_public_status(client: TestClient) -> None:
@@ -673,12 +74,13 @@ def test_worlds_require_bearer_auth(client: TestClient) -> None:
 
 
 def test_register_hashes_password_and_enforces_unique_username_email() -> None:
-    driver = _FakeDriver()
+    driver = _driver()
     auth = AuthService(driver=driver)
     user = auth.register(
         UserCreate(username="alice", email="alice@example.com", password="test-password")
     )
-    stored = driver.db["users"][str(user.id)]
+    stored = driver.get_user_by_id(str(user.id))
+    assert stored is not None
     assert stored["password_hash"] != "test-password"
     assert auth.authenticate("alice", "test-password") is not None
     with pytest.raises(ValueError):
@@ -688,29 +90,39 @@ def test_register_hashes_password_and_enforces_unique_username_email() -> None:
 
 
 def test_first_registered_user_claims_only_existing_legacy_worlds() -> None:
-    driver = _FakeDriver()
-    driver.db["worlds"]["legacy"] = {
-        "id": "00000000-0000-0000-0000-000000000001",
-        "title": "Legacy",
-        "tone": None,
-        "era_notes": None,
-        "seed": None,
-        "created_at": "2020-01-01T00:00:00+00:00",
-    }
+    driver = _driver()
+    driver.create_world(
+        {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "title": "Legacy",
+            "tone": None,
+            "era_notes": None,
+            "seed": None,
+            "created_at": "2020-01-01T00:00:00+00:00",
+            "owner_id": None,
+        }
+    )
     auth = AuthService(driver=driver)
     first = auth.register(UserCreate(username="first", email="first@example.com", password="test-password"))
-    assert driver.db["worlds"]["legacy"]["owner_id"] == str(first.id)
+    legacy = driver.get_world("00000000-0000-0000-0000-000000000001")
+    assert legacy is not None
+    assert legacy["owner_id"] == str(first.id)
 
-    driver.db["worlds"]["new-legacy"] = {
-        "id": "00000000-0000-0000-0000-000000000002",
-        "title": "New Legacy",
-        "tone": None,
-        "era_notes": None,
-        "seed": None,
-        "created_at": "2020-01-01T00:00:00+00:00",
-    }
+    driver.create_world(
+        {
+            "id": "00000000-0000-0000-0000-000000000002",
+            "title": "New Legacy",
+            "tone": None,
+            "era_notes": None,
+            "seed": None,
+            "created_at": "2020-01-01T00:00:00+00:00",
+            "owner_id": None,
+        }
+    )
     auth.register(UserCreate(username="second", email="second@example.com", password="test-password"))
-    assert driver.db["worlds"]["new-legacy"].get("owner_id") is None
+    new_legacy = driver.get_world("00000000-0000-0000-0000-000000000002")
+    assert new_legacy is not None
+    assert new_legacy.get("owner_id") is None
 
 
 def test_create_list_get_world(client: TestClient) -> None:
@@ -800,7 +212,7 @@ def test_generate_returns_404_for_unknown_world(client: TestClient) -> None:
 
 
 def test_generate_uses_stub_when_llm_disabled(client: TestClient) -> None:
-    fresh: WorldService = WorldService(driver=_FakeDriver(), llm=None)
+    fresh: WorldService = WorldService(driver=_driver(), llm=None)
     app.dependency_overrides[get_world_service] = lambda: fresh
     r = client.post("/worlds", json={"title": "Z"})
     wid = r.json()["id"]
@@ -819,7 +231,7 @@ def test_generate_uses_llm_when_service_enabled(client: TestClient) -> None:
         def generate_section(self, world, section):  # noqa: ANN001
             return f"LLM:{section}"
 
-    fresh = WorldService(driver=_FakeDriver(), llm=_SvcLLM())
+    fresh = WorldService(driver=_driver(), llm=_SvcLLM())
     app.dependency_overrides[get_world_service] = lambda: fresh
     r = client.post("/worlds", json={"title": "Q"})
     wid = r.json()["id"]
@@ -836,7 +248,7 @@ def test_agentic_generate_returns_404_for_unknown_world(client: TestClient) -> N
 
 
 def test_agentic_generate_uses_stub_when_llm_disabled(client: TestClient) -> None:
-    fresh: WorldService = WorldService(driver=_FakeDriver(), llm=None)
+    fresh: WorldService = WorldService(driver=_driver(), llm=None)
     app.dependency_overrides[get_world_service] = lambda: fresh
     r = client.post("/worlds", json={"title": "Z"})
     wid = r.json()["id"]
@@ -848,7 +260,7 @@ def test_agentic_generate_uses_stub_when_llm_disabled(client: TestClient) -> Non
 
 
 def test_agentic_generate_creates_entity_when_requested(client: TestClient) -> None:
-    fresh: WorldService = WorldService(driver=_FakeDriver(), llm=None)
+    fresh: WorldService = WorldService(driver=_driver(), llm=None)
     app.dependency_overrides[get_world_service] = lambda: fresh
     r = client.post("/worlds", json={"title": "Z"})
     wid = r.json()["id"]
@@ -949,7 +361,7 @@ def test_relationship_crud_and_export(client: TestClient) -> None:
 
 
 def test_generation_suggestion_inbox_and_apply(client: TestClient) -> None:
-    fresh: WorldService = WorldService(driver=_FakeDriver(), llm=None)
+    fresh: WorldService = WorldService(driver=_driver(), llm=None)
     app.dependency_overrides[get_world_service] = lambda: fresh
     world = client.post("/worlds", json={"title": "Inbox"}).json()
     wid = world["id"]
@@ -1345,7 +757,7 @@ def test_draft_extract_accepts_valid_llm_json(client: TestClient) -> None:
         '"content":"The blue writ opens sealed roads.","payload":{"title":"Blue Writ",'
         '"body":"The blue writ opens sealed roads."}}]}'
     )
-    fresh = WorldService(driver=_FakeDriver(), llm=llm)
+    fresh = WorldService(driver=_driver(), llm=llm)
     app.dependency_overrides[get_world_service] = lambda: fresh
     world = client.post("/worlds", json={"title": "LLM Extraction"}).json()
     draft = client.post(

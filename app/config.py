@@ -11,9 +11,7 @@ from dotenv import load_dotenv
 class Settings:
     """Database and LLM settings from the environment."""
 
-    neo4j_uri: str
-    neo4j_user: str
-    neo4j_password: str
+    sqlite_path: str
 
     llm_backend: Literal["openrouter", "none"]
     openrouter_api_key: str | None
@@ -44,9 +42,7 @@ def load_settings() -> Settings:
     jwt_secret = os.environ.get("WORLD_GENERATOR_JWT_SECRET", "dev-insecure-change-me-at-least-32-bytes")
 
     return Settings(
-        neo4j_uri=os.environ.get("WORLD_GENERATOR_NEO4J_URI", "bolt://localhost:7687"),
-        neo4j_user=os.environ.get("WORLD_GENERATOR_NEO4J_USER", "neo4j"),
-        neo4j_password=os.environ.get("WORLD_GENERATOR_NEO4J_PASSWORD", ""),
+        sqlite_path=os.environ.get("WORLD_GENERATOR_SQLITE_PATH", "./data/world_generator.sqlite3"),
         llm_backend=backend,
         openrouter_api_key=os.environ.get("WORLD_GENERATOR_OPENROUTER_API_KEY"),
         openrouter_model=os.environ.get("WORLD_GENERATOR_OPENROUTER_MODEL"),

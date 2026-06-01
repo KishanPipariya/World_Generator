@@ -18,3 +18,7 @@ docs/FUTURE_FEATURES.md
 
 # Environment variables
 .env
+
+# Local runtime data
+data/*.sqlite3
+data/*.sqlite3-*

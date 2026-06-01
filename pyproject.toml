@@ -9,7 +9,6 @@ dependencies = [
     "email-validator>=2.2.0",
     "fastapi>=0.115.0",
     "httpx>=0.28.1",
-    "neo4j>=6.1.0",
     "openai>=1.0.0",
     "passlib[bcrypt]>=1.7.4",
     "PyJWT>=2.10.1",

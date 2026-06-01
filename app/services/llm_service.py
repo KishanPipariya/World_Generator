@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from openai import OpenAI
 
@@ -76,7 +76,7 @@ class _OpenRouterBackend:
 
         completion = self._client.chat.completions.create(
             model=model,
-            messages=messages,
+            messages=cast(Any, messages),
             max_tokens=self._settings.llm_max_tokens,
             temperature=self._settings.llm_temperature,
             extra_headers=headers or None,

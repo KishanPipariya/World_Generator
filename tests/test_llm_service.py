@@ -12,9 +12,7 @@ from app.services.llm_service import LLMService, _OpenRouterBackend, _world_cont
 
 def _base_settings(**overrides: Any) -> Settings:
     s = Settings(
-        neo4j_uri="bolt://localhost:7687",
-        neo4j_user="neo4j",
-        neo4j_password="password",
+        sqlite_path=":memory:",
         llm_backend="openrouter",
         openrouter_api_key="secret",
         openrouter_model="test-model",

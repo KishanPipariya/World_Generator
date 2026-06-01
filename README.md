@@ -34,7 +34,6 @@ For longer-term product direction, see
 
 - Python 3.13+
 - [uv](https://docs.astral.sh/uv/)
-- Docker, for Neo4j
 - Node.js and npm, for the React frontend
 
 ## Setup
@@ -52,22 +51,12 @@ cd frontend
 npm install
 ```
 
-Start Neo4j:
+SQLite is used by default and initialized automatically at
+`./data/world_generator.sqlite3`. Override the path with:
 
-```bash
-export WORLD_GENERATOR_NEO4J_PASSWORD='replace-with-a-local-password'
-docker-compose up -d
+```text
+WORLD_GENERATOR_SQLITE_PATH=./data/world_generator.sqlite3
 ```
-
-The local database connection is:
-
-- URI: `bolt://localhost:7687`
-- User: `neo4j`
-- Password: value of `WORLD_GENERATOR_NEO4J_PASSWORD`
-
-Override these with `WORLD_GENERATOR_NEO4J_URI`,
-`WORLD_GENERATOR_NEO4J_USER`, and `WORLD_GENERATOR_NEO4J_PASSWORD`.
-Do not deploy with the historical `neo4j/password` default.
 
 Authentication uses open signup by default. Configure these before deploying:
 
@@ -244,10 +233,9 @@ npm run build
 - `app/main.py` - FastAPI application and router setup.
 - `app/api/routes/` - API routes for health checks and world resources.
 - `app/schemas/world.py` - Pydantic request and response models.
-- `app/services/world_service.py` - Neo4j-backed world, canon, planning, draft,
+- `app/services/world_service.py` - SQLite-backed world, canon, planning, draft,
   export, and consistency logic.
 - `app/services/llm_service.py` - Optional OpenRouter integration using the
   OpenAI Python SDK.
 - `frontend/` - React and Vite frontend.
 - `tests/` - Pytest coverage for API, service, DB, and LLM behavior.
-- `docker-compose.yml` - Local Neo4j service.

@@ -5,7 +5,7 @@ import re
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal, Protocol
+from typing import Literal, Protocol
 from uuid import UUID, uuid4
 
 from app.schemas.world import (
@@ -59,6 +59,7 @@ from app.services.consistency import (
 )
 from app.services.entity_types import display_entity_type
 from app.services.markdown_export import build_markdown_export
+from app.sqlite_driver import SQLiteDriver
 
 _current_owner_id: ContextVar[str | None] = ContextVar("world_generator_owner_id", default=None)
 
@@ -85,10 +86,6 @@ class WorldLLM(Protocol):
     ) -> str | None: ...
 
 
-class Neo4jDriverLike(Protocol):
-    def session(self) -> Any: ...
-
-
 @dataclass
 class _WorldRecord:
     id: UUID
@@ -101,74 +98,41 @@ class _WorldRecord:
 
 
 class WorldService:
-    def __init__(self, driver: Neo4jDriverLike, llm: WorldLLM | None = None) -> None:
+    def __init__(self, driver: SQLiteDriver, llm: WorldLLM | None = None) -> None:
         self._driver = driver
         self._llm = llm
         self._world_cache: dict[tuple[UUID, str | None], _WorldRecord] = {}
 
     def initialize_schema(self) -> None:
-        """Create lookup constraints used by the service's hot queries."""
-        queries = [
-            "CREATE CONSTRAINT world_id_unique IF NOT EXISTS FOR (w:World) REQUIRE w.id IS UNIQUE",
-            "CREATE INDEX world_owner_id IF NOT EXISTS FOR (w:World) ON (w.owner_id)",
-            "CREATE CONSTRAINT entity_id_unique IF NOT EXISTS FOR (e:Entity) REQUIRE e.id IS UNIQUE",
-            "CREATE INDEX entity_world_id IF NOT EXISTS FOR (e:Entity) ON (e.world_id)",
-            "CREATE INDEX relationship_world_id IF NOT EXISTS FOR ()-[r:RELATED_TO]-() ON (r.world_id)",
-            "CREATE INDEX canon_issue_world_id IF NOT EXISTS FOR (i:CanonIssue) ON (i.world_id)",
-            "CREATE INDEX canon_suggestion_world_id IF NOT EXISTS FOR (s:CanonSuggestion) ON (s.world_id)",
-            "CREATE INDEX timeline_event_world_id IF NOT EXISTS FOR (t:TimelineEvent) ON (t.world_id)",
-            "CREATE INDEX graph_view_world_id IF NOT EXISTS FOR (v:GraphView) ON (v.world_id)",
-            "CREATE INDEX planning_board_world_id IF NOT EXISTS FOR (b:PlanningBoard) ON (b.world_id)",
-            "CREATE INDEX campaign_session_world_id IF NOT EXISTS FOR (cs:CampaignSession) ON (cs.world_id)",
-            "CREATE INDEX lore_note_world_id IF NOT EXISTS FOR (ln:LoreNote) ON (ln.world_id)",
-            "CREATE INDEX faction_clock_world_id IF NOT EXISTS FOR (fc:FactionClock) ON (fc.world_id)",
-            "CREATE INDEX draft_passage_world_id IF NOT EXISTS FOR (d:DraftPassage) ON (d.world_id)",
-            "CREATE INDEX revision_version_world_id IF NOT EXISTS FOR (r:RevisionVersion) ON (r.world_id)",
-        ]
-        with self._driver.session() as session:
-            for query in queries:
-                session.run(query)
+        self._driver.initialize_schema()
 
     def _get_record(self, world_id: UUID) -> _WorldRecord | None:
         owner_id = _current_owner_id.get()
         cache_key = (world_id, owner_id)
         if cached := self._world_cache.get(cache_key):
             return cached
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $id
-          AND ($owner_id IS NULL OR properties(w).owner_id = $owner_id)
-        RETURN properties(w) AS props
-        """
-        with self._driver.session() as session:
-            result = session.run(query, id=str(world_id), owner_id=owner_id)
-            record = result.single()
-            if not record:
-                return None
-            world = self._world_from_props(record.get("props", record))
-            self._world_cache[cache_key] = world
-            return world
+        record = self._driver.get_world(str(world_id), owner_id)
+        if not record:
+            return None
+        world = self._world_from_props(record)
+        self._world_cache[cache_key] = world
+        return world
 
     def create(self, data: WorldCreate) -> WorldRead:
         wid = uuid4()
         now = datetime.now(UTC)
-        query = """
-        CREATE (w:World {
-            id: $id, title: $title, tone: $tone, 
-            era_notes: $era_notes, seed: $seed, created_at: $created_at,
-            owner_id: $owner_id
-        })
-        """
         owner_id = _current_owner_id.get()
-        with self._driver.session() as session:
-            session.run(query, 
-                        id=str(wid), 
-                        title=data.title, 
-                        tone=data.tone,
-                        era_notes=data.era_notes, 
-                        seed=data.seed,
-                        owner_id=owner_id,
-                        created_at=now.isoformat())
+        self._driver.create_world(
+            {
+                "id": str(wid),
+                "title": data.title,
+                "tone": data.tone,
+                "era_notes": data.era_notes,
+                "seed": data.seed,
+                "owner_id": owner_id,
+                "created_at": now.isoformat(),
+            }
+        )
         
         rec = _WorldRecord(
             id=wid,
@@ -251,22 +215,12 @@ class WorldService:
         return DemoWorldResponse(world=world, entities=entities, relationships=relationships)
 
     def list_worlds(self) -> list[WorldRead]:
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w)
-          AND ($owner_id IS NULL OR properties(w).owner_id = $owner_id)
-        WITH properties(w) AS props
-        RETURN props
-        ORDER BY props.created_at DESC
-        """
         owner_id = _current_owner_id.get()
         worlds = []
-        with self._driver.session() as session:
-            result = session.run(query, owner_id=owner_id)
-            for record in result:
-                world = self._world_from_props(record.get("props", record))
-                self._world_cache[(world.id, owner_id)] = world
-                worlds.append(self._to_read(world))
+        for record in self._driver.list_worlds(owner_id):
+            world = self._world_from_props(record)
+            self._world_cache[(world.id, owner_id)] = world
+            worlds.append(self._to_read(world))
         return worlds
 
     def get(self, world_id: UUID) -> WorldRead | None:
@@ -276,35 +230,12 @@ class WorldService:
     def delete_world(self, world_id: UUID) -> bool:
         if not self._get_record(world_id):
             return False
-        delete_entities_query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        MATCH (w)<-[belongs]-(e)
-        WHERE type(belongs) = "BELONGS_TO" AND "Entity" IN labels(e)
-        DETACH DELETE e
-        """
-        delete_issue_query = """
-        MATCH (i)
-        WHERE "CanonIssue" IN labels(i) AND properties(i).world_id = $w_id
-        DETACH DELETE i
-        """
-        delete_world_query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        WITH w
-        DETACH DELETE w
-        RETURN 1 AS deleted
-        """
-        with self._driver.session() as session:
-            session.run(delete_entities_query, w_id=str(world_id))
-            session.run(delete_issue_query, w_id=str(world_id))
-            result = session.run(delete_world_query, w_id=str(world_id))
-            record = result.single()
-            if record and record["deleted"]:
-                for key in list(self._world_cache):
-                    if key[0] == world_id:
-                        self._world_cache.pop(key, None)
-            return bool(record and record["deleted"])
+        deleted = self._driver.delete_world(str(world_id))
+        if deleted:
+            for key in list(self._world_cache):
+                if key[0] == world_id:
+                    self._world_cache.pop(key, None)
+        return deleted
 
     def generate_stub(
         self,
@@ -356,54 +287,25 @@ class WorldService:
         eid = uuid4()
         now = datetime.now(UTC)
         structured_json = json.dumps(structured_fields or {}, sort_keys=True)
-        query = """
-        MATCH (w:World {id: $w_id})
-        CREATE (w)<-[:BELONGS_TO]-(e:Entity {
-            id: $e_id, world_id: $w_id, name: $name, 
-            entity_type: $entity_type, description: $description,
-            structured_fields_json: $structured_fields_json, created_at: $created_at
-        })
-        RETURN e.id AS id, e.world_id AS world_id, e.name AS name,
-               e.entity_type AS entity_type, e.description AS description,
-               e.structured_fields_json AS structured_fields_json, e.created_at AS created_at
-        """
-        with self._driver.session() as session:
-            result = session.run(query, 
-                                 w_id=str(world_id), 
-                                 e_id=str(eid),
-                                 name=name,
-                                 entity_type=entity_type,
-                                 description=description,
-                                 structured_fields_json=structured_json,
-                                 created_at=now.isoformat())
-            record = result.single()
-            if not record:
-                raise ValueError("Failed to create entity. World not found?")
-            return EntityRead(
-                id=UUID(record["id"]),
-                world_id=UUID(record["world_id"]),
-                name=record["name"],
-                entity_type=record["entity_type"],
-                description=record["description"],
-                structured_fields=self._decode_structured_fields(record.get("structured_fields_json")),
-                created_at=datetime.fromisoformat(record["created_at"])
-            )
+        record = self._driver.create_entity(
+            {
+                "id": str(eid),
+                "world_id": str(world_id),
+                "name": name,
+                "entity_type": entity_type,
+                "description": description,
+                "structured_fields_json": structured_json,
+                "created_at": now.isoformat(),
+            }
+        )
+        if not record:
+            raise ValueError("Failed to create entity. World not found?")
+        return self._entity_from_record(record)
 
     def list_entities(self, world_id: UUID) -> list[EntityRead] | None:
         if not self._get_record(world_id):
             return None
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        MATCH (w)<-[belongs]-(e)
-        WHERE type(belongs) = "BELONGS_TO" AND "Entity" IN labels(e)
-        WITH properties(e) AS props
-        RETURN props
-        ORDER BY props.entity_type ASC, props.name ASC
-        """
-        with self._driver.session() as session:
-            result = session.run(query, w_id=str(world_id))
-            return [self._entity_from_record(record) for record in result]
+        return [self._entity_from_record(record) for record in self._driver.list_entities(str(world_id))]
 
     def update_entity(
         self, world_id: UUID, entity_id: UUID, data: EntityUpdate
@@ -411,82 +313,43 @@ class WorldService:
         updates = data.model_dump(exclude_unset=True)
         if not updates:
             return self.get_entity(world_id, entity_id)
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        MATCH (w)<-[belongs]-(e)
-        WHERE type(belongs) = "BELONGS_TO"
-          AND "Entity" IN labels(e)
-          AND properties(e).id = $e_id
-        SET e.name = coalesce($name, e.name),
-            e.entity_type = coalesce($entity_type, e.entity_type),
-            e.description = coalesce($description, e.description),
-            e.structured_fields_json = coalesce($structured_fields_json, e.structured_fields_json)
-        RETURN properties(e) AS props, $source AS source
-        """
-        with self._driver.session() as session:
-            current = self.get_entity(world_id, entity_id)
-            result = session.run(
-                query,
-                w_id=str(world_id),
-                e_id=str(entity_id),
-                name=updates.get("name"),
-                entity_type=updates.get("entity_type"),
-                description=updates.get("description"),
-                structured_fields_json=(
+        current = self.get_entity(world_id, entity_id)
+        values = {
+            key: value
+            for key, value in {
+                "name": updates.get("name"),
+                "entity_type": updates.get("entity_type"),
+                "description": updates.get("description"),
+                "structured_fields_json": (
                     json.dumps(updates["structured_fields"], sort_keys=True)
                     if "structured_fields" in updates
                     else None
                 ),
+            }.items()
+            if value is not None
+        }
+        record = self._driver.update_entity(str(world_id), str(entity_id), values)
+        updated = self._entity_from_record(record) if record else None
+        if current and updated and updates.get("description") is not None:
+            self._record_revision(
+                world_id=world_id,
+                entity_id=entity_id,
+                subject_type="entity",
+                field_name="description",
+                previous_value=current.description,
+                new_value=updated.description,
                 source="manual",
             )
-            record = result.single()
-            updated = self._entity_from_record(record) if record else None
-            if current and updated and updates.get("description") is not None:
-                self._record_revision(
-                    world_id=world_id,
-                    entity_id=entity_id,
-                    subject_type="entity",
-                    field_name="description",
-                    previous_value=current.description,
-                    new_value=updated.description,
-                    source="manual",
-                )
-            return updated
+        return updated
 
     def get_entity(self, world_id: UUID, entity_id: UUID) -> EntityRead | None:
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        MATCH (w)<-[belongs]-(e)
-        WHERE type(belongs) = "BELONGS_TO"
-          AND "Entity" IN labels(e)
-          AND properties(e).id = $e_id
-        RETURN properties(e) AS props
-        """
-        with self._driver.session() as session:
-            result = session.run(query, w_id=str(world_id), e_id=str(entity_id))
-            record = result.single()
-            return self._entity_from_record(record) if record else None
+        record = self._driver.get_entity(str(world_id), str(entity_id))
+        return self._entity_from_record(record) if record else None
 
     def delete_entity(self, world_id: UUID, entity_id: UUID) -> bool | None:
         if not self._get_record(world_id):
             return None
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        MATCH (w)<-[belongs]-(e)
-        WHERE type(belongs) = "BELONGS_TO"
-          AND "Entity" IN labels(e)
-          AND properties(e).id = $e_id
-        OPTIONAL MATCH (e)-[linked]-()
-        DELETE linked, e
-        RETURN count(e) AS deleted
-        """
-        with self._driver.session() as session:
-            result = session.run(query, w_id=str(world_id), e_id=str(entity_id))
-            record = result.single()
-            return bool(record and record["deleted"])
+        return self._driver.delete_entity(str(world_id), str(entity_id))
 
     def create_relationship(
         self,
@@ -504,84 +367,36 @@ class WorldService:
     ) -> RelationshipRead:
         rid = uuid4()
         now = datetime.now(UTC)
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        MATCH (w)<-[source_belongs]-(source)
-        WHERE type(source_belongs) = "BELONGS_TO"
-          AND "Entity" IN labels(source)
-          AND properties(source).id = $source_id
-        MATCH (w)<-[target_belongs]-(target)
-        WHERE type(target_belongs) = "BELONGS_TO"
-          AND "Entity" IN labels(target)
-          AND properties(target).id = $target_id
-        CREATE (source)-[r:RELATED_TO {
-            id: $r_id, world_id: $w_id, relation_type: $relation_type,
-            notes: $notes, category: $category, strength: $strength,
-            history: $history, stance: $stance, color: $color,
-            display_priority: $display_priority, created_at: $created_at
-        }]->(target)
-        WITH properties(r) AS rel_props,
-             properties(source) AS source_props,
-             properties(target) AS target_props
-        RETURN rel_props, source_props, target_props
-        """
-        with self._driver.session() as session:
-            result = session.run(
-                query,
-                w_id=str(world_id),
-                source_id=str(source_entity_id),
-                target_id=str(target_entity_id),
-                r_id=str(rid),
-                relation_type=relation_type,
-                notes=notes,
-                category=category,
-                strength=strength,
-                history=history,
-                stance=stance,
-                color=color,
-                display_priority=display_priority,
-                created_at=now.isoformat(),
-            )
-            record = result.single()
-            if not record:
-                raise ValueError("World or entity not found")
-            return self._relationship_from_record(record)
+        record = self._driver.create_relationship(
+            {
+                "id": str(rid),
+                "world_id": str(world_id),
+                "source_entity_id": str(source_entity_id),
+                "target_entity_id": str(target_entity_id),
+                "relation_type": relation_type,
+                "notes": notes,
+                "category": category,
+                "strength": strength,
+                "history": history,
+                "stance": stance,
+                "color": color,
+                "display_priority": display_priority,
+                "created_at": now.isoformat(),
+            }
+        )
+        if not record:
+            raise ValueError("World or entity not found")
+        return self._relationship_from_record(record)
 
     def list_relationships(self, world_id: UUID) -> list[RelationshipRead] | None:
         if not self._get_record(world_id):
             return None
-        query = """
-        MATCH (source)-[r]->(target)
-        WHERE type(r) = "RELATED_TO"
-          AND properties(r).world_id = $w_id
-          AND "Entity" IN labels(source)
-          AND "Entity" IN labels(target)
-        WITH properties(r) AS rel_props,
-             properties(source) AS source_props,
-             properties(target) AS target_props
-        RETURN rel_props, source_props, target_props
-        ORDER BY rel_props.created_at DESC
-        """
-        with self._driver.session() as session:
-            result = session.run(query, w_id=str(world_id))
-            return [self._relationship_from_record(record) for record in result]
+        return [self._relationship_from_record(record) for record in self._driver.list_relationships(str(world_id))]
 
     def delete_relationship(self, world_id: UUID, relationship_id: UUID) -> bool | None:
         if not self._get_record(world_id):
             return None
-        query = """
-        MATCH ()-[r]->()
-        WHERE type(r) = "RELATED_TO"
-          AND properties(r).id = $r_id
-          AND properties(r).world_id = $w_id
-        DELETE r
-        RETURN count(r) AS deleted
-        """
-        with self._driver.session() as session:
-            result = session.run(query, w_id=str(world_id), r_id=str(relationship_id))
-            record = result.single()
-            return bool(record and record["deleted"])
+        return self._driver.delete_relationship(str(world_id), str(relationship_id))
 
     def export_markdown(self, world_id: UUID, preset: ExportPreset = "full_bible") -> str | None:
         rec = self._get_record(world_id)
@@ -660,50 +475,19 @@ class WorldService:
             return None
         now = datetime.now(UTC)
         note_is_set = "note" in data.model_fields_set
-        query = """
-        MATCH (i)
-        WHERE "CanonIssue" IN labels(i)
-          AND properties(i).world_id = $w_id
-          AND properties(i).id = $issue_id
-        SET i.status = coalesce($status, i.status),
-            i.note = CASE WHEN $note_is_set THEN $note ELSE i.note END,
-            i.updated_at = $updated_at
-        RETURN properties(i) AS props
-        """
-        with self._driver.session() as session:
-            result = session.run(
-                query,
-                w_id=str(world_id),
-                issue_id=str(issue_id),
-                status=data.status,
-                note=data.note,
-                note_is_set=note_is_set,
-                updated_at=now.isoformat(),
-            )
-            record = result.single()
-            if not record:
-                return None
-            return self._consistency_issue_state_from_record(record)
+        values: dict[str, object] = {"updated_at": now.isoformat()}
+        if data.status is not None:
+            values["status"] = data.status
+        if note_is_set:
+            values["note"] = data.note
+        record = self._driver.update_world_record("canon_issues", str(world_id), str(issue_id), values)
+        return self._consistency_issue_state_from_record(record) if record else None
 
     def get_world_context(self, world_id: UUID) -> str:
         """Retrieves existing lore/entities for a world via RAG-style DB query."""
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $id
-        MATCH (w)<-[belongs]-(e)
-        WHERE type(belongs) = "BELONGS_TO" AND "Entity" IN labels(e)
-        WITH properties(e) AS props
-        RETURN props
-        ORDER BY props.created_at ASC
-        """
         entities = []
-        with self._driver.session() as session:
-            result = session.run(query, id=str(world_id))
-            for record in result:
-                props = record.get("props", record)
-                entities.append(
-                    f"[{props['entity_type']}] {props['name']}:\n{props['description']}"
-                )
+        for props in self._driver.list_entities(str(world_id), order_by="created_at ASC"):
+            entities.append(f"[{props['entity_type']}] {props['name']}:\n{props['description']}")
         
         if not entities:
             return "No previous world lore has been generated yet."
@@ -765,37 +549,28 @@ class WorldService:
         now: datetime,
     ) -> ConsistencyIssueStateRead:
         issue_id = uuid4()
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        CREATE (w)<-[:BELONGS_TO]-(i:CanonIssue {
-            id: $issue_id, world_id: $w_id, fingerprint: $fingerprint,
-            code: $code, severity: $severity, message: $message,
-            target_type: $target_type, entity_id: $entity_id,
-            relationship_id: $relationship_id, status: "open", note: $note,
-            first_seen: $first_seen, last_seen: $last_seen, updated_at: $updated_at
-        })
-        RETURN properties(i) AS props
-        """
-        with self._driver.session() as session:
-            result = session.run(
-                query,
-                w_id=str(world_id),
-                issue_id=str(issue_id),
-                fingerprint=fingerprint,
-                code=issue.code,
-                severity=issue.severity,
-                message=issue.message,
-                target_type=target_type,
-                entity_id=str(issue.entity_id) if issue.entity_id else None,
-                relationship_id=str(issue.relationship_id) if issue.relationship_id else None,
-                note=None,
-                first_seen=now.isoformat(),
-                last_seen=now.isoformat(),
-                updated_at=now.isoformat(),
-            )
-            record = result.single()
-            return self._consistency_issue_state_from_record(record)
+        record = self._driver.create_world_record(
+            "canon_issues",
+            {
+                "id": str(issue_id),
+                "world_id": str(world_id),
+                "fingerprint": fingerprint,
+                "code": issue.code,
+                "severity": issue.severity,
+                "message": issue.message,
+                "target_type": target_type,
+                "entity_id": str(issue.entity_id) if issue.entity_id else None,
+                "relationship_id": str(issue.relationship_id) if issue.relationship_id else None,
+                "status": "open",
+                "note": None,
+                "first_seen": now.isoformat(),
+                "last_seen": now.isoformat(),
+                "updated_at": now.isoformat(),
+            },
+        )
+        if not record:
+            raise ValueError("World not found")
+        return self._consistency_issue_state_from_record(record)
 
     def _update_detected_consistency_issue(
         self,
@@ -805,51 +580,31 @@ class WorldService:
         status: str,
         now: datetime,
     ) -> ConsistencyIssueStateRead:
-        query = """
-        MATCH (i)
-        WHERE "CanonIssue" IN labels(i) AND properties(i).id = $issue_id
-        SET i.code = $code,
-            i.severity = $severity,
-            i.message = $message,
-            i.target_type = $target_type,
-            i.entity_id = $entity_id,
-            i.relationship_id = $relationship_id,
-            i.status = $status,
-            i.last_seen = $last_seen,
-            i.updated_at = $updated_at
-        RETURN properties(i) AS props
-        """
-        with self._driver.session() as session:
-            result = session.run(
-                query,
-                issue_id=str(state.id),
-                code=issue.code,
-                severity=issue.severity,
-                message=issue.message,
-                target_type=target_type,
-                entity_id=str(issue.entity_id) if issue.entity_id else None,
-                relationship_id=str(issue.relationship_id) if issue.relationship_id else None,
-                status=status,
-                last_seen=now.isoformat(),
-                updated_at=now.isoformat(),
-            )
-            record = result.single()
-            return self._consistency_issue_state_from_record(record)
+        record = self._driver.update_world_record(
+            "canon_issues",
+            str(state.world_id),
+            str(state.id),
+            {
+                "code": issue.code,
+                "severity": issue.severity,
+                "message": issue.message,
+                "target_type": target_type,
+                "entity_id": str(issue.entity_id) if issue.entity_id else None,
+                "relationship_id": str(issue.relationship_id) if issue.relationship_id else None,
+                "status": status,
+                "last_seen": now.isoformat(),
+                "updated_at": now.isoformat(),
+            },
+        )
+        if not record:
+            raise ValueError("Consistency issue not found")
+        return self._consistency_issue_state_from_record(record)
 
     def _list_consistency_issue_states(self, world_id: UUID) -> list[ConsistencyIssueStateRead]:
-        query = """
-        MATCH (i)
-        WHERE "CanonIssue" IN labels(i) AND properties(i).world_id = $w_id
-        WITH properties(i) AS props
-        RETURN props
-        ORDER BY props.updated_at DESC
-        """
-        states = []
-        with self._driver.session() as session:
-            result = session.run(query, w_id=str(world_id))
-            for record in result:
-                states.append(self._consistency_issue_state_from_record(record))
-        return states
+        return [
+            self._consistency_issue_state_from_record(record)
+            for record in self._driver.list_world_records("canon_issues", str(world_id), "updated_at DESC")
+        ]
 
     def agentic_generate(
         self, world_id: UUID, instruction: str, save_as_type: str | None, save_as_name: str | None
@@ -901,55 +656,35 @@ class WorldService:
             raise ValueError("World not found")
         sid = uuid4()
         now = datetime.now(UTC)
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        CREATE (w)<-[:BELONGS_TO]-(s:CanonSuggestion {
-            id: $s_id, world_id: $w_id, instruction: $instruction,
-            content: $content, suggested_name: $suggested_name,
-            suggested_type: $suggested_type, status: "pending",
-            candidate_kind: $candidate_kind, source_type: $source_type,
-            source_id: $source_id, source_excerpt: $source_excerpt,
-            payload_json: $payload_json,
-            created_at: $created_at
-        })
-        RETURN properties(s) AS props
-        """
-        with self._driver.session() as session:
-            result = session.run(
-                query,
-                w_id=str(world_id),
-                s_id=str(sid),
-                instruction=instruction,
-                content=content,
-                suggested_name=suggested_name,
-                suggested_type=suggested_type,
-                candidate_kind=candidate_kind,
-                source_type=source_type,
-                source_id=str(source_id) if source_id else None,
-                source_excerpt=source_excerpt,
-                payload_json=json.dumps(payload or {}),
-                created_at=now.isoformat(),
-            )
-            record = result.single()
-            if not record:
-                raise ValueError("World not found")
-            return self._suggestion_from_record(record)
+        record = self._driver.create_world_record(
+            "canon_suggestions",
+            {
+                "id": str(sid),
+                "world_id": str(world_id),
+                "instruction": instruction,
+                "content": content,
+                "suggested_name": suggested_name,
+                "suggested_type": suggested_type,
+                "status": "pending",
+                "candidate_kind": candidate_kind,
+                "source_type": source_type,
+                "source_id": str(source_id) if source_id else None,
+                "source_excerpt": source_excerpt,
+                "payload_json": json.dumps(payload or {}),
+                "created_at": now.isoformat(),
+            },
+        )
+        if not record:
+            raise ValueError("World not found")
+        return self._suggestion_from_record(record)
 
     def list_generation_suggestions(self, world_id: UUID) -> list[GenerationSuggestionRead] | None:
         if not self._get_record(world_id):
             return None
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        MATCH (w)<-[belongs]-(s)
-        WHERE type(belongs) = "BELONGS_TO" AND "CanonSuggestion" IN labels(s)
-        RETURN properties(s) AS props
-        ORDER BY props.created_at DESC
-        """
-        with self._driver.session() as session:
-            result = session.run(query, w_id=str(world_id))
-            return [self._suggestion_from_record(record) for record in result]
+        return [
+            self._suggestion_from_record(record)
+            for record in self._driver.list_world_records("canon_suggestions", str(world_id), "created_at DESC")
+        ]
 
     def apply_generation_suggestion(
         self,
@@ -1065,161 +800,97 @@ class WorldService:
             raise ValueError("World not found")
         event_id = uuid4()
         now = datetime.now(UTC)
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        CREATE (w)<-[:BELONGS_TO]-(t:TimelineEvent {
-            id: $event_id, world_id: $w_id, title: $title,
-            event_order: $event_order, description: $description,
-            participants_json: $participants_json, causes: $causes,
-            consequences: $consequences, created_at: $created_at,
-            date_label: $date_label, era_label: $era_label,
-            depends_on_json: $depends_on_json
-        })
-        RETURN properties(t) AS props
-        """
-        with self._driver.session() as session:
-            result = session.run(
-                query,
-                w_id=str(world_id),
-                event_id=str(event_id),
-                title=data.title,
-                event_order=data.event_order,
-                description=data.description,
-                participants_json=json.dumps([str(item) for item in data.participants]),
-                causes=data.causes,
-                consequences=data.consequences,
-                date_label=data.date_label,
-                era_label=data.era_label,
-                depends_on_json=json.dumps([str(item) for item in data.depends_on]),
-                created_at=now.isoformat(),
-            )
-            record = result.single()
-            if not record:
-                raise ValueError("World not found")
-            return self._timeline_event_from_record(record)
+        record = self._driver.create_world_record(
+            "timeline_events",
+            {
+                "id": str(event_id),
+                "world_id": str(world_id),
+                "title": data.title,
+                "event_order": data.event_order,
+                "description": data.description,
+                "participants_json": json.dumps([str(item) for item in data.participants]),
+                "causes": data.causes,
+                "consequences": data.consequences,
+                "date_label": data.date_label,
+                "era_label": data.era_label,
+                "depends_on_json": json.dumps([str(item) for item in data.depends_on]),
+                "created_at": now.isoformat(),
+            },
+        )
+        if not record:
+            raise ValueError("World not found")
+        return self._timeline_event_from_record(record)
 
     def list_timeline_events(self, world_id: UUID) -> list[TimelineEventRead] | None:
         if not self._get_record(world_id):
             return None
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        MATCH (w)<-[belongs]-(t)
-        WHERE type(belongs) = "BELONGS_TO" AND "TimelineEvent" IN labels(t)
-        RETURN properties(t) AS props
-        ORDER BY props.event_order ASC, props.created_at ASC
-        """
-        with self._driver.session() as session:
-            result = session.run(query, w_id=str(world_id))
-            return [self._timeline_event_from_record(record) for record in result]
+        return [
+            self._timeline_event_from_record(record)
+            for record in self._driver.list_world_records("timeline_events", str(world_id), "event_order ASC, created_at ASC")
+        ]
 
     def create_graph_view(self, world_id: UUID, data: GraphViewCreate) -> GraphViewRead:
         if not self._get_record(world_id):
             raise ValueError("World not found")
         view_id = uuid4()
         now = datetime.now(UTC)
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        CREATE (w)<-[:BELONGS_TO]-(v:GraphView {
-            id: $view_id, world_id: $w_id, name: $name,
-            layout_mode: $layout_mode, filters_json: $filters_json,
-            camera_json: $camera_json, node_positions_json: $node_positions_json,
-            created_at: $created_at, updated_at: $updated_at
-        })
-        RETURN properties(v) AS props
-        """
-        with self._driver.session() as session:
-            result = session.run(
-                query,
-                w_id=str(world_id),
-                view_id=str(view_id),
-                name=data.name,
-                layout_mode=data.layout_mode,
-                filters_json=json.dumps(data.filters, sort_keys=True),
-                camera_json=data.camera.model_dump_json(),
-                node_positions_json=json.dumps(data.node_positions, sort_keys=True),
-                created_at=now.isoformat(),
-                updated_at=now.isoformat(),
-            )
-            record = result.single()
-            if not record:
-                raise ValueError("World not found")
-            return self._graph_view_from_record(record)
+        record = self._driver.create_world_record(
+            "graph_views",
+            {
+                "id": str(view_id),
+                "world_id": str(world_id),
+                "name": data.name,
+                "layout_mode": data.layout_mode,
+                "filters_json": json.dumps(data.filters, sort_keys=True),
+                "camera_json": data.camera.model_dump_json(),
+                "node_positions_json": json.dumps(data.node_positions, sort_keys=True),
+                "created_at": now.isoformat(),
+                "updated_at": now.isoformat(),
+            },
+        )
+        if not record:
+            raise ValueError("World not found")
+        return self._graph_view_from_record(record)
 
     def list_graph_views(self, world_id: UUID) -> list[GraphViewRead] | None:
         if not self._get_record(world_id):
             return None
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        MATCH (w)<-[belongs]-(v)
-        WHERE type(belongs) = "BELONGS_TO" AND "GraphView" IN labels(v)
-        RETURN properties(v) AS props
-        ORDER BY props.updated_at DESC
-        """
-        with self._driver.session() as session:
-            result = session.run(query, w_id=str(world_id))
-            return [self._graph_view_from_record(record) for record in result]
+        return [
+            self._graph_view_from_record(record)
+            for record in self._driver.list_world_records("graph_views", str(world_id), "updated_at DESC")
+        ]
 
     def delete_graph_view(self, world_id: UUID, view_id: UUID) -> bool | None:
         if not self._get_record(world_id):
             return None
-        query = """
-        MATCH (v)
-        WHERE "GraphView" IN labels(v)
-          AND properties(v).world_id = $w_id
-          AND properties(v).id = $view_id
-        DETACH DELETE v
-        RETURN count(v) AS deleted
-        """
-        with self._driver.session() as session:
-            result = session.run(query, w_id=str(world_id), view_id=str(view_id))
-            record = result.single()
-            return bool(record and record["deleted"])
+        return self._driver.delete_world_record("graph_views", str(world_id), str(view_id))
 
     def create_planning_board(self, world_id: UUID, data: PlanningBoardCreate) -> PlanningBoardRead:
         if not self._get_record(world_id):
             raise ValueError("World not found")
         board_id = uuid4()
         now = datetime.now(UTC)
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        CREATE (w)<-[:BELONGS_TO]-(b:PlanningBoard {
-            id: $board_id, world_id: $w_id, name: $name,
-            board_type: $board_type, created_at: $created_at
-        })
-        RETURN properties(b) AS props
-        """
-        with self._driver.session() as session:
-            result = session.run(
-                query,
-                w_id=str(world_id),
-                board_id=str(board_id),
-                name=data.name,
-                board_type=data.board_type,
-                created_at=now.isoformat(),
-            )
-            record = result.single()
-            if not record:
-                raise ValueError("World not found")
-            return self._planning_board_from_record(record)
+        record = self._driver.create_world_record(
+            "planning_boards",
+            {
+                "id": str(board_id),
+                "world_id": str(world_id),
+                "name": data.name,
+                "board_type": data.board_type,
+                "created_at": now.isoformat(),
+            },
+        )
+        if not record:
+            raise ValueError("World not found")
+        return self._planning_board_from_record(record)
 
     def list_planning_boards(self, world_id: UUID) -> list[PlanningBoardDetail] | None:
         if not self._get_record(world_id):
             return None
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        MATCH (w)<-[belongs]-(b)
-        WHERE type(belongs) = "BELONGS_TO" AND "PlanningBoard" IN labels(b)
-        RETURN properties(b) AS props
-        ORDER BY props.created_at ASC
-        """
-        with self._driver.session() as session:
-            boards = [self._planning_board_from_record(record) for record in session.run(query, w_id=str(world_id))]
+        boards = [
+            self._planning_board_from_record(record)
+            for record in self._driver.list_world_records("planning_boards", str(world_id), "created_at ASC")
+        ]
         return [
             PlanningBoardDetail(**board.model_dump(), cards=self.list_planning_cards(world_id, board.id) or [])
             for board in boards
@@ -1232,55 +903,36 @@ class WorldService:
             raise ValueError("World not found")
         card_id = uuid4()
         now = datetime.now(UTC)
-        query = """
-        MATCH (b)
-        WHERE "PlanningBoard" IN labels(b)
-          AND properties(b).world_id = $w_id
-          AND properties(b).id = $board_id
-        CREATE (b)<-[:BELONGS_TO]-(c:PlanningCard {
-            id: $card_id, board_id: $board_id, world_id: $w_id,
-            title: $title, description: $description, lane: $lane,
-            position: $position, entity_links_json: $entity_links_json,
-            relationship_links_json: $relationship_links_json,
-            timeline_event_links_json: $timeline_event_links_json,
-            created_at: $created_at
-        })
-        RETURN properties(c) AS props
-        """
-        with self._driver.session() as session:
-            result = session.run(
-                query,
-                w_id=str(world_id),
-                board_id=str(board_id),
-                card_id=str(card_id),
-                title=data.title,
-                description=data.description,
-                lane=data.lane,
-                position=data.position,
-                entity_links_json=json.dumps([str(item) for item in data.entity_links]),
-                relationship_links_json=json.dumps([str(item) for item in data.relationship_links]),
-                timeline_event_links_json=json.dumps([str(item) for item in data.timeline_event_links]),
-                created_at=now.isoformat(),
-            )
-            record = result.single()
-            if not record:
-                raise ValueError("Board not found")
-            return self._planning_card_from_record(record)
+        record = self._driver.create_planning_card(
+            {
+                "id": str(card_id),
+                "board_id": str(board_id),
+                "world_id": str(world_id),
+                "title": data.title,
+                "description": data.description,
+                "lane": data.lane,
+                "position": data.position,
+                "entity_links_json": json.dumps([str(item) for item in data.entity_links]),
+                "relationship_links_json": json.dumps([str(item) for item in data.relationship_links]),
+                "timeline_event_links_json": json.dumps([str(item) for item in data.timeline_event_links]),
+                "created_at": now.isoformat(),
+            },
+        )
+        if not record:
+            raise ValueError("Board not found")
+        return self._planning_card_from_record(record)
 
     def list_planning_cards(self, world_id: UUID, board_id: UUID) -> list[PlanningCardRead] | None:
-        query = """
-        MATCH (b)<-[belongs]-(c)
-        WHERE type(belongs) = "BELONGS_TO"
-          AND "PlanningBoard" IN labels(b)
-          AND "PlanningCard" IN labels(c)
-          AND properties(b).world_id = $w_id
-          AND properties(b).id = $board_id
-        RETURN properties(c) AS props
-        ORDER BY props.lane ASC, props.position ASC, props.created_at ASC
-        """
-        with self._driver.session() as session:
-            result = session.run(query, w_id=str(world_id), board_id=str(board_id))
-            return [self._planning_card_from_record(record) for record in result]
+        return [
+            self._planning_card_from_record(record)
+            for record in self._driver.list_world_records(
+                "planning_cards",
+                str(world_id),
+                "lane ASC, position ASC, created_at ASC",
+                "board_id = ?",
+                [str(board_id)],
+            )
+        ]
 
     def create_campaign_session(
         self, world_id: UUID, data: CampaignSessionCreate
@@ -1290,53 +942,36 @@ class WorldService:
         self._validate_campaign_links(world_id, data)
         session_id = uuid4()
         now = datetime.now(UTC)
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        CREATE (w)<-[:BELONGS_TO]-(cs:CampaignSession {
-            id: $session_id, world_id: $w_id, session_number: $session_number,
-            title: $title, played_date: $played_date, in_world_date: $in_world_date,
-            recap: $recap, player_actions: $player_actions, consequences: $consequences,
-            linked_entity_ids_json: $linked_entity_ids_json,
-            linked_relationship_ids_json: $linked_relationship_ids_json,
-            linked_timeline_event_ids_json: $linked_timeline_event_ids_json,
-            created_at: $created_at, updated_at: $updated_at
-        })
-        RETURN properties(cs) AS props
-        """
-        with self._driver.session() as session:
-            result = session.run(
-                query,
-                w_id=str(world_id),
-                session_id=str(session_id),
-                session_number=data.session_number,
-                title=data.title,
-                played_date=data.played_date,
-                in_world_date=data.in_world_date,
-                recap=data.recap,
-                player_actions=data.player_actions,
-                consequences=data.consequences,
-                linked_entity_ids_json=self._uuid_list_json(data.linked_entity_ids),
-                linked_relationship_ids_json=self._uuid_list_json(data.linked_relationship_ids),
-                linked_timeline_event_ids_json=self._uuid_list_json(data.linked_timeline_event_ids),
-                created_at=now.isoformat(),
-                updated_at=now.isoformat(),
-            )
-            return self._campaign_session_from_record(result.single())
+        record = self._driver.create_world_record(
+            "campaign_sessions",
+            {
+                "id": str(session_id),
+                "world_id": str(world_id),
+                "session_number": data.session_number,
+                "title": data.title,
+                "played_date": data.played_date,
+                "in_world_date": data.in_world_date,
+                "recap": data.recap,
+                "player_actions": data.player_actions,
+                "consequences": data.consequences,
+                "linked_entity_ids_json": self._uuid_list_json(data.linked_entity_ids),
+                "linked_relationship_ids_json": self._uuid_list_json(data.linked_relationship_ids),
+                "linked_timeline_event_ids_json": self._uuid_list_json(data.linked_timeline_event_ids),
+                "created_at": now.isoformat(),
+                "updated_at": now.isoformat(),
+            },
+        )
+        if not record:
+            raise ValueError("World not found")
+        return self._campaign_session_from_record(record)
 
     def list_campaign_sessions(self, world_id: UUID) -> list[CampaignSessionRead] | None:
         if not self._get_record(world_id):
             return None
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        MATCH (w)<-[belongs]-(cs)
-        WHERE type(belongs) = "BELONGS_TO" AND "CampaignSession" IN labels(cs)
-        RETURN properties(cs) AS props
-        ORDER BY props.session_number DESC, props.created_at DESC
-        """
-        with self._driver.session() as session:
-            return [self._campaign_session_from_record(record) for record in session.run(query, w_id=str(world_id))]
+        return [
+            self._campaign_session_from_record(record)
+            for record in self._driver.list_world_records("campaign_sessions", str(world_id), "session_number DESC, created_at DESC")
+        ]
 
     def update_campaign_session(
         self, world_id: UUID, session_id: UUID, data: CampaignSessionUpdate
@@ -1349,48 +984,30 @@ class WorldService:
         merged = CampaignSessionCreate(**(current.model_dump() | data.model_dump(exclude_unset=True)))
         self._validate_campaign_links(world_id, merged)
         now = datetime.now(UTC)
-        query = """
-        MATCH (cs)
-        WHERE "CampaignSession" IN labels(cs)
-          AND properties(cs).world_id = $w_id
-          AND properties(cs).id = $session_id
-        SET cs.session_number = $session_number,
-            cs.title = $title,
-            cs.played_date = $played_date,
-            cs.in_world_date = $in_world_date,
-            cs.recap = $recap,
-            cs.player_actions = $player_actions,
-            cs.consequences = $consequences,
-            cs.linked_entity_ids_json = $linked_entity_ids_json,
-            cs.linked_relationship_ids_json = $linked_relationship_ids_json,
-            cs.linked_timeline_event_ids_json = $linked_timeline_event_ids_json,
-            cs.updated_at = $updated_at
-        RETURN properties(cs) AS props
-        """
-        with self._driver.session() as session:
-            result = session.run(
-                query,
-                w_id=str(world_id),
-                session_id=str(session_id),
-                session_number=merged.session_number,
-                title=merged.title,
-                played_date=merged.played_date,
-                in_world_date=merged.in_world_date,
-                recap=merged.recap,
-                player_actions=merged.player_actions,
-                consequences=merged.consequences,
-                linked_entity_ids_json=self._uuid_list_json(merged.linked_entity_ids),
-                linked_relationship_ids_json=self._uuid_list_json(merged.linked_relationship_ids),
-                linked_timeline_event_ids_json=self._uuid_list_json(merged.linked_timeline_event_ids),
-                updated_at=now.isoformat(),
-            )
-            record = result.single()
-            return self._campaign_session_from_record(record) if record else None
+        record = self._driver.update_world_record(
+            "campaign_sessions",
+            str(world_id),
+            str(session_id),
+            {
+                "session_number": merged.session_number,
+                "title": merged.title,
+                "played_date": merged.played_date,
+                "in_world_date": merged.in_world_date,
+                "recap": merged.recap,
+                "player_actions": merged.player_actions,
+                "consequences": merged.consequences,
+                "linked_entity_ids_json": self._uuid_list_json(merged.linked_entity_ids),
+                "linked_relationship_ids_json": self._uuid_list_json(merged.linked_relationship_ids),
+                "linked_timeline_event_ids_json": self._uuid_list_json(merged.linked_timeline_event_ids),
+                "updated_at": now.isoformat(),
+            },
+        )
+        return self._campaign_session_from_record(record) if record else None
 
     def delete_campaign_session(self, world_id: UUID, session_id: UUID) -> bool | None:
         if not self._get_record(world_id):
             return None
-        return self._delete_campaign_node(world_id, session_id, "CampaignSession", "cs")
+        return self._delete_campaign_node(world_id, session_id, "CampaignSession")
 
     def create_lore_note(self, world_id: UUID, data: LoreNoteCreate) -> LoreNoteRead:
         if not self._get_record(world_id):
@@ -1398,49 +1015,34 @@ class WorldService:
         self._validate_lore_subject(world_id, data.subject_type, data.subject_id)
         note_id = uuid4()
         now = datetime.now(UTC)
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        CREATE (w)<-[:BELONGS_TO]-(ln:LoreNote {
-            id: $note_id, world_id: $w_id, title: $title, body: $body,
-            subject_type: $subject_type, subject_id: $subject_id,
-            visibility: $visibility, truth_state: $truth_state,
-            reveal_condition: $reveal_condition, handout_text: $handout_text,
-            created_at: $created_at, updated_at: $updated_at
-        })
-        RETURN properties(ln) AS props
-        """
-        with self._driver.session() as session:
-            result = session.run(
-                query,
-                w_id=str(world_id),
-                note_id=str(note_id),
-                title=data.title,
-                body=data.body,
-                subject_type=data.subject_type,
-                subject_id=str(data.subject_id) if data.subject_id else None,
-                visibility=data.visibility,
-                truth_state=data.truth_state,
-                reveal_condition=data.reveal_condition,
-                handout_text=data.handout_text,
-                created_at=now.isoformat(),
-                updated_at=now.isoformat(),
-            )
-            return self._lore_note_from_record(result.single())
+        record = self._driver.create_world_record(
+            "lore_notes",
+            {
+                "id": str(note_id),
+                "world_id": str(world_id),
+                "title": data.title,
+                "body": data.body,
+                "subject_type": data.subject_type,
+                "subject_id": str(data.subject_id) if data.subject_id else None,
+                "visibility": data.visibility,
+                "truth_state": data.truth_state,
+                "reveal_condition": data.reveal_condition,
+                "handout_text": data.handout_text,
+                "created_at": now.isoformat(),
+                "updated_at": now.isoformat(),
+            },
+        )
+        if not record:
+            raise ValueError("World not found")
+        return self._lore_note_from_record(record)
 
     def list_lore_notes(self, world_id: UUID) -> list[LoreNoteRead] | None:
         if not self._get_record(world_id):
             return None
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        MATCH (w)<-[belongs]-(ln)
-        WHERE type(belongs) = "BELONGS_TO" AND "LoreNote" IN labels(ln)
-        RETURN properties(ln) AS props
-        ORDER BY props.updated_at DESC, props.created_at DESC
-        """
-        with self._driver.session() as session:
-            return [self._lore_note_from_record(record) for record in session.run(query, w_id=str(world_id))]
+        return [
+            self._lore_note_from_record(record)
+            for record in self._driver.list_world_records("lore_notes", str(world_id), "updated_at DESC, created_at DESC")
+        ]
 
     def update_lore_note(
         self, world_id: UUID, note_id: UUID, data: LoreNoteUpdate
@@ -1453,44 +1055,28 @@ class WorldService:
         merged = LoreNoteCreate(**(current.model_dump() | data.model_dump(exclude_unset=True)))
         self._validate_lore_subject(world_id, merged.subject_type, merged.subject_id)
         now = datetime.now(UTC)
-        query = """
-        MATCH (ln)
-        WHERE "LoreNote" IN labels(ln)
-          AND properties(ln).world_id = $w_id
-          AND properties(ln).id = $note_id
-        SET ln.title = $title,
-            ln.body = $body,
-            ln.subject_type = $subject_type,
-            ln.subject_id = $subject_id,
-            ln.visibility = $visibility,
-            ln.truth_state = $truth_state,
-            ln.reveal_condition = $reveal_condition,
-            ln.handout_text = $handout_text,
-            ln.updated_at = $updated_at
-        RETURN properties(ln) AS props
-        """
-        with self._driver.session() as session:
-            result = session.run(
-                query,
-                w_id=str(world_id),
-                note_id=str(note_id),
-                title=merged.title,
-                body=merged.body,
-                subject_type=merged.subject_type,
-                subject_id=str(merged.subject_id) if merged.subject_id else None,
-                visibility=merged.visibility,
-                truth_state=merged.truth_state,
-                reveal_condition=merged.reveal_condition,
-                handout_text=merged.handout_text,
-                updated_at=now.isoformat(),
-            )
-            record = result.single()
-            return self._lore_note_from_record(record) if record else None
+        record = self._driver.update_world_record(
+            "lore_notes",
+            str(world_id),
+            str(note_id),
+            {
+                "title": merged.title,
+                "body": merged.body,
+                "subject_type": merged.subject_type,
+                "subject_id": str(merged.subject_id) if merged.subject_id else None,
+                "visibility": merged.visibility,
+                "truth_state": merged.truth_state,
+                "reveal_condition": merged.reveal_condition,
+                "handout_text": merged.handout_text,
+                "updated_at": now.isoformat(),
+            },
+        )
+        return self._lore_note_from_record(record) if record else None
 
     def delete_lore_note(self, world_id: UUID, note_id: UUID) -> bool | None:
         if not self._get_record(world_id):
             return None
-        return self._delete_campaign_node(world_id, note_id, "LoreNote", "ln")
+        return self._delete_campaign_node(world_id, note_id, "LoreNote")
 
     def create_faction_clock(self, world_id: UUID, data: FactionClockCreate) -> FactionClockRead:
         if not self._get_record(world_id):
@@ -1498,54 +1084,36 @@ class WorldService:
         self._validate_clock_links(world_id, data)
         clock_id = uuid4()
         now = datetime.now(UTC)
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        CREATE (w)<-[:BELONGS_TO]-(fc:FactionClock {
-            id: $clock_id, world_id: $w_id, title: $title,
-            linked_entity_id: $linked_entity_id, segments: $segments,
-            filled_segments: $filled_segments, stakes: $stakes, status: $status,
-            linked_session_ids_json: $linked_session_ids_json,
-            linked_entity_ids_json: $linked_entity_ids_json,
-            linked_relationship_ids_json: $linked_relationship_ids_json,
-            linked_timeline_event_ids_json: $linked_timeline_event_ids_json,
-            created_at: $created_at, updated_at: $updated_at
-        })
-        RETURN properties(fc) AS props
-        """
-        with self._driver.session() as session:
-            result = session.run(
-                query,
-                w_id=str(world_id),
-                clock_id=str(clock_id),
-                title=data.title,
-                linked_entity_id=str(data.linked_entity_id) if data.linked_entity_id else None,
-                segments=data.segments,
-                filled_segments=data.filled_segments,
-                stakes=data.stakes,
-                status=data.status,
-                linked_session_ids_json=self._uuid_list_json(data.linked_session_ids),
-                linked_entity_ids_json=self._uuid_list_json(data.linked_entity_ids),
-                linked_relationship_ids_json=self._uuid_list_json(data.linked_relationship_ids),
-                linked_timeline_event_ids_json=self._uuid_list_json(data.linked_timeline_event_ids),
-                created_at=now.isoformat(),
-                updated_at=now.isoformat(),
-            )
-            return self._faction_clock_from_record(result.single())
+        record = self._driver.create_world_record(
+            "faction_clocks",
+            {
+                "id": str(clock_id),
+                "world_id": str(world_id),
+                "title": data.title,
+                "linked_entity_id": str(data.linked_entity_id) if data.linked_entity_id else None,
+                "segments": data.segments,
+                "filled_segments": data.filled_segments,
+                "stakes": data.stakes,
+                "status": data.status,
+                "linked_session_ids_json": self._uuid_list_json(data.linked_session_ids),
+                "linked_entity_ids_json": self._uuid_list_json(data.linked_entity_ids),
+                "linked_relationship_ids_json": self._uuid_list_json(data.linked_relationship_ids),
+                "linked_timeline_event_ids_json": self._uuid_list_json(data.linked_timeline_event_ids),
+                "created_at": now.isoformat(),
+                "updated_at": now.isoformat(),
+            },
+        )
+        if not record:
+            raise ValueError("World not found")
+        return self._faction_clock_from_record(record)
 
     def list_faction_clocks(self, world_id: UUID) -> list[FactionClockRead] | None:
         if not self._get_record(world_id):
             return None
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        MATCH (w)<-[belongs]-(fc)
-        WHERE type(belongs) = "BELONGS_TO" AND "FactionClock" IN labels(fc)
-        RETURN properties(fc) AS props
-        ORDER BY props.status ASC, props.updated_at DESC
-        """
-        with self._driver.session() as session:
-            return [self._faction_clock_from_record(record) for record in session.run(query, w_id=str(world_id))]
+        return [
+            self._faction_clock_from_record(record)
+            for record in self._driver.list_world_records("faction_clocks", str(world_id), "status ASC, updated_at DESC")
+        ]
 
     def update_faction_clock(
         self, world_id: UUID, clock_id: UUID, data: FactionClockUpdate
@@ -1558,48 +1126,30 @@ class WorldService:
         merged = FactionClockCreate(**(current.model_dump() | data.model_dump(exclude_unset=True)))
         self._validate_clock_links(world_id, merged)
         now = datetime.now(UTC)
-        query = """
-        MATCH (fc)
-        WHERE "FactionClock" IN labels(fc)
-          AND properties(fc).world_id = $w_id
-          AND properties(fc).id = $clock_id
-        SET fc.title = $title,
-            fc.linked_entity_id = $linked_entity_id,
-            fc.segments = $segments,
-            fc.filled_segments = $filled_segments,
-            fc.stakes = $stakes,
-            fc.status = $status,
-            fc.linked_session_ids_json = $linked_session_ids_json,
-            fc.linked_entity_ids_json = $linked_entity_ids_json,
-            fc.linked_relationship_ids_json = $linked_relationship_ids_json,
-            fc.linked_timeline_event_ids_json = $linked_timeline_event_ids_json,
-            fc.updated_at = $updated_at
-        RETURN properties(fc) AS props
-        """
-        with self._driver.session() as session:
-            result = session.run(
-                query,
-                w_id=str(world_id),
-                clock_id=str(clock_id),
-                title=merged.title,
-                linked_entity_id=str(merged.linked_entity_id) if merged.linked_entity_id else None,
-                segments=merged.segments,
-                filled_segments=merged.filled_segments,
-                stakes=merged.stakes,
-                status=merged.status,
-                linked_session_ids_json=self._uuid_list_json(merged.linked_session_ids),
-                linked_entity_ids_json=self._uuid_list_json(merged.linked_entity_ids),
-                linked_relationship_ids_json=self._uuid_list_json(merged.linked_relationship_ids),
-                linked_timeline_event_ids_json=self._uuid_list_json(merged.linked_timeline_event_ids),
-                updated_at=now.isoformat(),
-            )
-            record = result.single()
-            return self._faction_clock_from_record(record) if record else None
+        record = self._driver.update_world_record(
+            "faction_clocks",
+            str(world_id),
+            str(clock_id),
+            {
+                "title": merged.title,
+                "linked_entity_id": str(merged.linked_entity_id) if merged.linked_entity_id else None,
+                "segments": merged.segments,
+                "filled_segments": merged.filled_segments,
+                "stakes": merged.stakes,
+                "status": merged.status,
+                "linked_session_ids_json": self._uuid_list_json(merged.linked_session_ids),
+                "linked_entity_ids_json": self._uuid_list_json(merged.linked_entity_ids),
+                "linked_relationship_ids_json": self._uuid_list_json(merged.linked_relationship_ids),
+                "linked_timeline_event_ids_json": self._uuid_list_json(merged.linked_timeline_event_ids),
+                "updated_at": now.isoformat(),
+            },
+        )
+        return self._faction_clock_from_record(record) if record else None
 
     def delete_faction_clock(self, world_id: UUID, clock_id: UUID) -> bool | None:
         if not self._get_record(world_id):
             return None
-        return self._delete_campaign_node(world_id, clock_id, "FactionClock", "fc")
+        return self._delete_campaign_node(world_id, clock_id, "FactionClock")
 
     def create_session_impact_review(
         self, world_id: UUID, session_id: UUID, instruction: str | None = None
@@ -1626,19 +1176,16 @@ class WorldService:
     ) -> list[RevisionVersionRead] | None:
         if not self._get_record(world_id):
             return None
-        query = """
-        MATCH (r)
-        WHERE "RevisionVersion" IN labels(r)
-          AND properties(r).world_id = $w_id
-          AND ($entity_id IS NULL OR properties(r).entity_id = $entity_id)
-        RETURN properties(r) AS props
-        ORDER BY props.created_at DESC
-        """
-        with self._driver.session() as session:
-            result = session.run(
-                query, w_id=str(world_id), entity_id=str(entity_id) if entity_id else None
+        return [
+            self._revision_from_record(record)
+            for record in self._driver.list_world_records(
+                "revision_versions",
+                str(world_id),
+                "created_at DESC",
+                "entity_id = ?" if entity_id else "",
+                [str(entity_id)] if entity_id else None,
             )
-            return [self._revision_from_record(record) for record in result]
+        ]
 
     def restore_revision(
         self, world_id: UUID, revision_id: UUID
@@ -1772,7 +1319,7 @@ class WorldService:
             draft_id=draft_id,
             summary=summary,
             excerpt=excerpt,
-            candidates=[DraftExtractionCandidate(**candidate) for candidate in candidates],
+            candidates=[DraftExtractionCandidate.model_validate(candidate) for candidate in candidates],
         )
 
     def queue_draft_extraction(
@@ -1875,133 +1422,75 @@ class WorldService:
             raise ValueError("World not found")
         draft_id = uuid4()
         now = datetime.now(UTC)
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        CREATE (w)<-[:BELONGS_TO]-(d:DraftPassage {
-            id: $draft_id, world_id: $w_id, title: $title, body: $body,
-            status: $status, linked_entity_ids_json: $linked_entity_ids_json,
-            linked_relationship_ids_json: $linked_relationship_ids_json,
-            linked_timeline_event_ids_json: $linked_timeline_event_ids_json,
-            check_history_json: $check_history_json,
-            created_at: $created_at, updated_at: $updated_at
-        })
-        RETURN properties(d) AS props
-        """
-        with self._driver.session() as session:
-            result = session.run(
-                query,
-                w_id=str(world_id),
-                draft_id=str(draft_id),
-                title=data.title,
-                body=data.body,
-                status=data.status,
-                linked_entity_ids_json=json.dumps([str(item) for item in data.linked_entity_ids]),
-                linked_relationship_ids_json=json.dumps(
-                    [str(item) for item in data.linked_relationship_ids]
-                ),
-                linked_timeline_event_ids_json=json.dumps(
-                    [str(item) for item in data.linked_timeline_event_ids]
-                ),
-                check_history_json="[]",
-                created_at=now.isoformat(),
-                updated_at=now.isoformat(),
-            )
-            record = result.single()
-            if not record:
-                raise ValueError("World not found")
-            return self._draft_from_record(record)
+        record = self._driver.create_world_record(
+            "draft_passages",
+            {
+                "id": str(draft_id),
+                "world_id": str(world_id),
+                "title": data.title,
+                "body": data.body,
+                "status": data.status,
+                "linked_entity_ids_json": json.dumps([str(item) for item in data.linked_entity_ids]),
+                "linked_relationship_ids_json": json.dumps([str(item) for item in data.linked_relationship_ids]),
+                "linked_timeline_event_ids_json": json.dumps([str(item) for item in data.linked_timeline_event_ids]),
+                "check_history_json": "[]",
+                "created_at": now.isoformat(),
+                "updated_at": now.isoformat(),
+            },
+        )
+        if not record:
+            raise ValueError("World not found")
+        return self._draft_from_record(record)
 
     def list_drafts(self, world_id: UUID) -> list[DraftRead] | None:
         if not self._get_record(world_id):
             return None
-        query = """
-        MATCH (w)
-        WHERE "World" IN labels(w) AND properties(w).id = $w_id
-        MATCH (w)<-[belongs]-(d)
-        WHERE type(belongs) = "BELONGS_TO" AND "DraftPassage" IN labels(d)
-        RETURN properties(d) AS props
-        ORDER BY props.updated_at DESC, props.created_at DESC
-        """
-        with self._driver.session() as session:
-            result = session.run(query, w_id=str(world_id))
-            return [self._draft_from_record(record) for record in result]
+        return [
+            self._draft_from_record(record)
+            for record in self._driver.list_world_records("draft_passages", str(world_id), "updated_at DESC, created_at DESC")
+        ]
 
     def get_draft(self, world_id: UUID, draft_id: UUID) -> DraftRead | None:
-        query = """
-        MATCH (d)
-        WHERE "DraftPassage" IN labels(d)
-          AND properties(d).world_id = $w_id
-          AND properties(d).id = $draft_id
-        RETURN properties(d) AS props
-        """
-        with self._driver.session() as session:
-            result = session.run(query, w_id=str(world_id), draft_id=str(draft_id))
-            record = result.single()
-            return self._draft_from_record(record) if record else None
+        record = self._driver.get_world_record("draft_passages", str(world_id), str(draft_id))
+        return self._draft_from_record(record) if record else None
 
     def update_draft(self, world_id: UUID, draft_id: UUID, data: DraftUpdate) -> DraftRead | None:
         updates = data.model_dump(exclude_unset=True)
         if not updates:
             return self.get_draft(world_id, draft_id)
         now = datetime.now(UTC)
-        query = """
-        MATCH (d)
-        WHERE "DraftPassage" IN labels(d)
-          AND properties(d).world_id = $w_id
-          AND properties(d).id = $draft_id
-        SET d.title = coalesce($title, d.title),
-            d.body = coalesce($body, d.body),
-            d.status = coalesce($status, d.status),
-            d.linked_entity_ids_json = coalesce($linked_entity_ids_json, d.linked_entity_ids_json),
-            d.linked_relationship_ids_json = coalesce($linked_relationship_ids_json, d.linked_relationship_ids_json),
-            d.linked_timeline_event_ids_json = coalesce($linked_timeline_event_ids_json, d.linked_timeline_event_ids_json),
-            d.updated_at = $updated_at
-        RETURN properties(d) AS props
-        """
-        with self._driver.session() as session:
-            result = session.run(
-                query,
-                w_id=str(world_id),
-                draft_id=str(draft_id),
-                title=updates.get("title"),
-                body=updates.get("body"),
-                status=updates.get("status"),
-                linked_entity_ids_json=(
+        values = {
+            key: value
+            for key, value in {
+                "title": updates.get("title"),
+                "body": updates.get("body"),
+                "status": updates.get("status"),
+                "linked_entity_ids_json": (
                     json.dumps([str(item) for item in updates["linked_entity_ids"]])
                     if "linked_entity_ids" in updates
                     else None
                 ),
-                linked_relationship_ids_json=(
+                "linked_relationship_ids_json": (
                     json.dumps([str(item) for item in updates["linked_relationship_ids"]])
                     if "linked_relationship_ids" in updates
                     else None
                 ),
-                linked_timeline_event_ids_json=(
+                "linked_timeline_event_ids_json": (
                     json.dumps([str(item) for item in updates["linked_timeline_event_ids"]])
                     if "linked_timeline_event_ids" in updates
                     else None
                 ),
-                updated_at=now.isoformat(),
-            )
-            record = result.single()
-            return self._draft_from_record(record) if record else None
+                "updated_at": now.isoformat(),
+            }.items()
+            if value is not None
+        }
+        record = self._driver.update_world_record("draft_passages", str(world_id), str(draft_id), values)
+        return self._draft_from_record(record) if record else None
 
     def delete_draft(self, world_id: UUID, draft_id: UUID) -> bool | None:
         if not self._get_record(world_id):
             return None
-        query = """
-        MATCH (d)
-        WHERE "DraftPassage" IN labels(d)
-          AND properties(d).world_id = $w_id
-          AND properties(d).id = $draft_id
-        DETACH DELETE d
-        RETURN count(d) AS deleted
-        """
-        with self._driver.session() as session:
-            result = session.run(query, w_id=str(world_id), draft_id=str(draft_id))
-            record = result.single()
-            return bool(record and record["deleted"])
+        return self._driver.delete_world_record("draft_passages", str(world_id), str(draft_id))
 
     def check_draft(self, world_id: UUID, draft_id: UUID) -> PassageCheckResponse | None:
         draft = self.get_draft(world_id, draft_id)
@@ -2025,23 +1514,15 @@ class WorldService:
                 "issues": [issue.model_dump(mode="json") for issue in report.issues],
             }
         )
-        query = """
-        MATCH (d)
-        WHERE "DraftPassage" IN labels(d)
-          AND properties(d).world_id = $w_id
-          AND properties(d).id = $draft_id
-        SET d.check_history_json = $check_history_json,
-            d.updated_at = $updated_at
-        RETURN properties(d) AS props
-        """
-        with self._driver.session() as session:
-            session.run(
-                query,
-                w_id=str(world_id),
-                draft_id=str(draft_id),
-                check_history_json=json.dumps(history),
-                updated_at=datetime.now(UTC).isoformat(),
-            )
+        self._driver.update_world_record(
+            "draft_passages",
+            str(world_id),
+            str(draft_id),
+            {
+                "check_history_json": json.dumps(history),
+                "updated_at": datetime.now(UTC).isoformat(),
+            },
+        )
         return report
 
     def _llm_extract_draft_candidates(
@@ -2208,37 +1689,21 @@ class WorldService:
     def _get_suggestion(
         self, world_id: UUID, suggestion_id: UUID
     ) -> GenerationSuggestionRead | None:
-        query = """
-        MATCH (s)
-        WHERE "CanonSuggestion" IN labels(s)
-          AND properties(s).world_id = $w_id
-          AND properties(s).id = $s_id
-        RETURN properties(s) AS props
-        """
-        with self._driver.session() as session:
-            result = session.run(query, w_id=str(world_id), s_id=str(suggestion_id))
-            record = result.single()
-            return self._suggestion_from_record(record) if record else None
+        record = self._driver.get_world_record("canon_suggestions", str(world_id), str(suggestion_id))
+        return self._suggestion_from_record(record) if record else None
 
     def _set_suggestion_status(
         self, world_id: UUID, suggestion_id: UUID, status_value: str
     ) -> GenerationSuggestionRead:
-        query = """
-        MATCH (s)
-        WHERE "CanonSuggestion" IN labels(s)
-          AND properties(s).world_id = $w_id
-          AND properties(s).id = $s_id
-        SET s.status = $status
-        RETURN properties(s) AS props
-        """
-        with self._driver.session() as session:
-            result = session.run(
-                query, w_id=str(world_id), s_id=str(suggestion_id), status=status_value
-            )
-            record = result.single()
-            if not record:
-                raise ValueError("Suggestion not found")
-            return self._suggestion_from_record(record)
+        record = self._driver.update_world_record(
+            "canon_suggestions",
+            str(world_id),
+            str(suggestion_id),
+            {"status": status_value},
+        )
+        if not record:
+            raise ValueError("Suggestion not found")
+        return self._suggestion_from_record(record)
 
     def _record_revision(
         self,
@@ -2252,78 +1717,43 @@ class WorldService:
     ) -> RevisionVersionRead:
         revision_id = uuid4()
         now = datetime.now(UTC)
-        query = """
-        CREATE (r:RevisionVersion {
-            id: $revision_id, world_id: $w_id, entity_id: $entity_id,
-            subject_type: $subject_type, field_name: $field_name,
-            previous_value: $previous_value, new_value: $new_value,
-            source: $source, created_at: $created_at
-        })
-        RETURN properties(r) AS props
-        """
-        with self._driver.session() as session:
-            result = session.run(
-                query,
-                revision_id=str(revision_id),
-                w_id=str(world_id),
-                entity_id=str(entity_id) if entity_id else None,
-                subject_type=subject_type,
-                field_name=field_name,
-                previous_value=previous_value,
-                new_value=new_value,
-                source=source,
-                created_at=now.isoformat(),
-            )
-            return self._revision_from_record(result.single())
+        record = self._driver.create_world_record(
+            "revision_versions",
+            {
+                "id": str(revision_id),
+                "world_id": str(world_id),
+                "entity_id": str(entity_id) if entity_id else None,
+                "subject_type": subject_type,
+                "field_name": field_name,
+                "previous_value": previous_value,
+                "new_value": new_value,
+                "source": source,
+                "created_at": now.isoformat(),
+            },
+        )
+        if not record:
+            raise ValueError("World not found")
+        return self._revision_from_record(record)
 
     def _get_campaign_session(self, world_id: UUID, session_id: UUID) -> CampaignSessionRead | None:
-        query = """
-        MATCH (cs)
-        WHERE "CampaignSession" IN labels(cs)
-          AND properties(cs).world_id = $w_id
-          AND properties(cs).id = $session_id
-        RETURN properties(cs) AS props
-        """
-        with self._driver.session() as session:
-            record = session.run(query, w_id=str(world_id), session_id=str(session_id)).single()
-            return self._campaign_session_from_record(record) if record else None
+        record = self._driver.get_world_record("campaign_sessions", str(world_id), str(session_id))
+        return self._campaign_session_from_record(record) if record else None
 
     def _get_lore_note(self, world_id: UUID, note_id: UUID) -> LoreNoteRead | None:
-        query = """
-        MATCH (ln)
-        WHERE "LoreNote" IN labels(ln)
-          AND properties(ln).world_id = $w_id
-          AND properties(ln).id = $note_id
-        RETURN properties(ln) AS props
-        """
-        with self._driver.session() as session:
-            record = session.run(query, w_id=str(world_id), note_id=str(note_id)).single()
-            return self._lore_note_from_record(record) if record else None
+        record = self._driver.get_world_record("lore_notes", str(world_id), str(note_id))
+        return self._lore_note_from_record(record) if record else None
 
     def _get_faction_clock(self, world_id: UUID, clock_id: UUID) -> FactionClockRead | None:
-        query = """
-        MATCH (fc)
-        WHERE "FactionClock" IN labels(fc)
-          AND properties(fc).world_id = $w_id
-          AND properties(fc).id = $clock_id
-        RETURN properties(fc) AS props
-        """
-        with self._driver.session() as session:
-            record = session.run(query, w_id=str(world_id), clock_id=str(clock_id)).single()
-            return self._faction_clock_from_record(record) if record else None
+        record = self._driver.get_world_record("faction_clocks", str(world_id), str(clock_id))
+        return self._faction_clock_from_record(record) if record else None
 
-    def _delete_campaign_node(self, world_id: UUID, node_id: UUID, label: str, alias: str) -> bool:
-        query = f"""
-        MATCH ({alias})
-        WHERE "{label}" IN labels({alias})
-          AND properties({alias}).world_id = $w_id
-          AND properties({alias}).id = $node_id
-        DETACH DELETE {alias}
-        RETURN count({alias}) AS deleted
-        """
-        with self._driver.session() as session:
-            record = session.run(query, w_id=str(world_id), node_id=str(node_id)).single()
-            return bool(record and record["deleted"])
+    def _delete_campaign_node(self, world_id: UUID, node_id: UUID, label: str) -> bool:
+        tables = {
+            "CampaignSession": "campaign_sessions",
+            "LoreNote": "lore_notes",
+            "FactionClock": "faction_clocks",
+        }
+        return self._driver.delete_world_record(tables[label], str(world_id), str(node_id))
 
     def _validate_campaign_links(self, world_id: UUID, data: CampaignSessionCreate) -> None:
         self._require_entity_ids(world_id, data.linked_entity_ids)
