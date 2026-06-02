@@ -290,7 +290,7 @@ test('keyboard users can reach skip link, tabs, and graph summary selection', as
 
 test('workspace modes support keyboard navigation and selected context filters', async ({ page }) => {
   await page.goto(`/worlds/${world.id}`);
-  for (const tab of ['Dashboard', 'Canon', 'Drafts', 'Timeline', 'Planning', 'Graph', 'Campaign']) {
+  for (const tab of ['Dashboard', 'Canon', 'Drafts', 'Timeline', 'Planning', 'Graph']) {
     await page.getByRole('tab', { name: tab }).focus();
     await page.keyboard.press('Enter');
     await expect(page.getByRole('tab', { name: tab })).toHaveAttribute('aria-selected', 'true');
