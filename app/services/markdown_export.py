@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from app.schemas.world import (
+from app.schemas.world_models import (
     CampaignSessionRead,
     EntityRead,
     ExportPreset,

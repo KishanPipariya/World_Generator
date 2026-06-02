@@ -1,6 +1,6 @@
 import { Globe, LogOut } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
-import type { User } from '../../lib/api';
+import type { User } from '../../lib/apiTypes';
 import { IconButton } from '../atoms';
 
 export function Navigation({ user, onLogout }: { user: User; onLogout: () => void }) {

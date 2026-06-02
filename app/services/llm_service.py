@@ -8,7 +8,7 @@ from openai import OpenAI
 from app.config import Settings, load_settings
 
 if TYPE_CHECKING:
-    from app.schemas.world import WorldRead
+    from app.schemas.world_models import WorldRead
 
 logger = logging.getLogger(__name__)
 

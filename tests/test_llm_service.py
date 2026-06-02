@@ -6,7 +6,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 from app.config import Settings
-from app.schemas.world import WorldRead
+from app.schemas.world_models import WorldRead
 from app.services.llm_service import LLMService, _OpenRouterBackend, _world_context
 
 

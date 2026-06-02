@@ -5,7 +5,7 @@ import type {
   GenerationSuggestion,
   PlanningCard,
   TimelineEvent,
-} from '../../../lib/api';
+} from '../../../lib/apiTypes';
 import { formatDateTime } from '../../../utils/format';
 import type { WorkspaceView } from './WorkspaceTabs';
 

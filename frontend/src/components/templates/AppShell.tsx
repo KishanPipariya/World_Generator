@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { User } from '../../lib/api';
+import type { User } from '../../lib/apiTypes';
 import { Navigation } from '../organisms/Navigation';
 
 export function AppShell({ user, onLogout, children }: {

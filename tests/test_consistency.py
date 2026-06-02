@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from app.schemas.world import EntityRead, RelationshipRead
+from app.schemas.world_models import EntityRead, RelationshipRead
 from app.services.consistency import (
     consistency_issue_fingerprint,
     consistency_score,

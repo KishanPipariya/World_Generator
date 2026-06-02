@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from uuid import UUID
 
-from app.schemas.world import ConsistencyIssue, EntityRead, RelationshipRead
+from app.schemas.world_models import ConsistencyIssue, EntityRead, RelationshipRead
 from app.services.entity_types import display_entity_type
 
 

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Alert, Button, TextInput, Textarea } from '../components/atoms';
-import { createWorld } from '../lib/api';
+import { createWorld } from '../lib/api/worlds';
 import './CreateWorld.css';
 
 const CreateWorld = () => {

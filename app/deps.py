@@ -1,7 +1,7 @@
 from app.config import load_settings
 from app.services.auth_service import AuthService
 from app.services.llm_service import LLMService, build_llm_service
-from app.services.world_service import WorldService
+from app.services.world import WorldService
 from app.sqlite_driver import SQLiteDriver
 
 _settings = load_settings()

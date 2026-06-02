@@ -1,73 +1,25 @@
-# React + TypeScript + Vite
+# World Generator Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React, TypeScript, and Vite client for the world-building workspace.
 
-Currently, two official plugins are available:
+## Local Commands
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- `npm run dev` starts the Vite dev server.
+- `npm run lint` runs ESLint.
+- `npm run build` runs TypeScript project checks and creates a production build.
+- `npm run test:a11y` runs the Playwright accessibility smoke tests.
+- `npm run check` runs lint, build, and accessibility checks.
 
-## React Compiler
+## API Layout
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+`src/lib/api.ts` is the compatibility barrel used by existing pages. New API code should live in:
 
-## Expanding the ESLint configuration
+- `src/lib/apiClient.ts` for Axios setup and auth-token handling.
+- `src/lib/apiTypes.ts` for shared response and payload types.
+- `src/lib/api/*.ts` for domain-specific REST calls.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+The default API base URL is `http://localhost:8000/api/v1`. Set `VITE_API_BASE_URL` when pointing the frontend at a different backend.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## Workspace Notes
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
-
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+The main authoring surface is `src/pages/WorldDetail.tsx`; extracted helpers and stable workspace constants live under `src/pages/worldDetail/`. The dedicated DM workflow is `src/pages/WorldDm.tsx` and shares suggestion application helpers with the main workspace.

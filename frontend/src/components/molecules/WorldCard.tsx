@@ -1,6 +1,6 @@
 import { BookOpen, Clock, Shield, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import type { World } from '../../lib/api';
+import type { World } from '../../lib/apiTypes';
 import { Badge } from '../atoms';
 import { formatDate } from '../../utils/format';
 

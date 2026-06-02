@@ -1,5 +1,5 @@
 import { Globe2 } from 'lucide-react';
-import type { World } from '../../lib/api';
+import type { World } from '../../lib/apiTypes';
 import { Button, EmptyState } from '../atoms';
 import { WorldCard } from '../molecules';
 

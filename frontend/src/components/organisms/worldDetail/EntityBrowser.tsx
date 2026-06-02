@@ -1,5 +1,5 @@
 import { BookOpen, Plus, Search } from 'lucide-react';
-import type { Entity } from '../../../lib/api';
+import type { Entity } from '../../../lib/apiTypes';
 import { IconButton } from '../../atoms';
 
 export function EntityBrowser({

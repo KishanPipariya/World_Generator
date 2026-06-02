@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, BookOpen, Clock, Download, FileText, Plus, Sparkles } from 'lucide-react';
 import {
-  applySuggestion,
   createDmFactionClock,
   createDmImpactReview,
   createDmLoreNote,
@@ -12,17 +11,21 @@ import {
   fetchDmLoreNotes,
   fetchDmSessions,
   fetchDmSuggestions,
-  fetchEntities,
-  fetchTimelineEvents,
-  fetchWorld,
-  type CampaignSession,
-  type FactionClock,
-  type GenerationSuggestion,
-  type LoreNote,
-  type World,
-} from '../lib/api';
+} from '../lib/api/campaign';
+import { fetchEntities } from '../lib/api/canon';
+import { applySuggestion } from '../lib/api/generation';
+import { fetchTimelineEvents } from '../lib/api/planning';
+import { fetchWorld } from '../lib/api/worlds';
+import type {
+  CampaignSession,
+  FactionClock,
+  GenerationSuggestion,
+  LoreNote,
+  World,
+} from '../lib/apiTypes';
 import { formatDateTime } from '../utils/format';
 import './WorldDetail.css';
+import { buildSuggestionApplyPayload, type SuggestionApplyMode } from './worldDetail/suggestions';
 
 const DM_EXPORT_PRESETS = [
   ['player_handout', 'Player Handout'],
@@ -181,17 +184,20 @@ const WorldDm = () => {
 
   const handleApplySuggestion = async (
     suggestion: GenerationSuggestion,
-    mode: 'create_entity' | 'create_timeline_event' | 'create_lore_note' | 'discard',
+    mode: Extract<SuggestionApplyMode, 'create_entity' | 'create_timeline_event' | 'create_lore_note' | 'discard'>,
   ) => {
     if (!id) return;
     setBusy(true);
     setErrorMessage('');
     try {
-      await applySuggestion(id, suggestion.id, {
-        mode,
-        name: suggestion.suggested_name || 'DM Impact',
-        entity_type: suggestion.suggested_type || 'Event',
-      });
+      await applySuggestion(
+        id,
+        suggestion.id,
+        buildSuggestionApplyPayload(suggestion, mode, {
+          fallbackName: 'DM Impact',
+          fallbackEntityType: 'Event',
+        }),
+      );
       await Promise.all([
         refreshSuggestions(),
         fetchDmLoreNotes(id).then(setNotes).catch(() => []),

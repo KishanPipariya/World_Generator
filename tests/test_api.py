@@ -10,7 +10,7 @@ from app.deps import get_auth_service, get_llm_service, get_world_service
 from app.main import app
 from app.schemas.auth import UserCreate
 from app.services.auth_service import AuthService
-from app.services.world_service import WorldService
+from app.services.world import WorldService
 from app.sqlite_driver import SQLiteDriver
 
 _active_driver: SQLiteDriver | None = None

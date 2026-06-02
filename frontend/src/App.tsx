@@ -3,7 +3,9 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { AuthGate } from './components/organisms';
 import { LoadingState } from './components/atoms';
 import { AppShell } from './components/templates';
-import { AUTH_TOKEN_KEY, fetchMe, type User } from './lib/api';
+import { AUTH_TOKEN_KEY } from './lib/apiClient';
+import { fetchMe } from './lib/api/auth';
+import type { User } from './lib/apiTypes';
 import './App.css';
 
 const Home = lazy(() => import('./pages/Home'));

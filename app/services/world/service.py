@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Literal, Protocol
 from uuid import UUID, uuid4
 
-from app.schemas.world import (
+from app.schemas.world_models import (
     CampaignSessionCreate,
     CampaignSessionRead,
     CampaignSessionUpdate,

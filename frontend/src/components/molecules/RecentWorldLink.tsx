@@ -1,6 +1,6 @@
 import { Clock } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import type { World } from '../../lib/api';
+import type { World } from '../../lib/apiTypes';
 import { formatDate } from '../../utils/format';
 
 export function RecentWorldLink({ world }: { world: World }) {

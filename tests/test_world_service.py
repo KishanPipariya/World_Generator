@@ -4,8 +4,8 @@ import os
 import tempfile
 from uuid import UUID
 
-from app.schemas.world import ConsistencyIssueUpdate, WorldCreate
-from app.services.world_service import WorldService
+from app.schemas.world_models import ConsistencyIssueUpdate, WorldCreate
+from app.services.world import WorldService
 from app.sqlite_driver import SQLiteDriver
 
 

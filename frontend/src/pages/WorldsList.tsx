@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, Globe2, Sparkles } from 'lucide-react';
 import { Alert, Button, ButtonLink, EmptyState, LoadingState } from '../components/atoms';
 import { WorldGrid, WorldToolbar } from '../components/organisms';
-import { createDemoWorld, deleteWorld, fetchWorlds, type World } from '../lib/api';
+import { createDemoWorld, deleteWorld, fetchWorlds } from '../lib/api/worlds';
+import type { World } from '../lib/apiTypes';
 import './Worlds.css';
 
 const WorldsList = () => {

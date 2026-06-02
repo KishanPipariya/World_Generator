@@ -1,5 +1,5 @@
 import type { Edge, Node } from '@xyflow/react';
-import type { Entity, GraphLayoutMode, Relationship, TimelineEvent } from './api';
+import type { Entity, GraphLayoutMode, Relationship, TimelineEvent } from './apiTypes';
 
 export type EntityGraphNode = Node<{
   label: string;

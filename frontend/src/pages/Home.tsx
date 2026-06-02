@@ -4,7 +4,8 @@ import { FilePlus2, Sparkles } from 'lucide-react';
 import { Alert, Button, ButtonLink } from '../components/atoms';
 import { PageHeader } from '../components/molecules';
 import { WorldDashboardPanels } from '../components/organisms';
-import { createDemoWorld, fetchWorlds, type World } from '../lib/api';
+import { createDemoWorld, fetchWorlds } from '../lib/api/worlds';
+import type { World } from '../lib/apiTypes';
 import './Home.css';
 
 const Home = () => {

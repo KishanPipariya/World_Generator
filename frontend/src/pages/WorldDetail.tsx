@@ -22,45 +22,16 @@ import {
 import { EntityBrowser } from '../components/organisms/worldDetail/EntityBrowser';
 import { WorldDetailDashboardPanel } from '../components/organisms/worldDetail/WorldDetailDashboardPanel';
 import { WorkspaceTabs, type WorkspaceView } from '../components/organisms/worldDetail/WorkspaceTabs';
+import { createEntity, createRelationship, deleteEntity, deleteRelationship, fetchEntities, fetchRelationships, updateEntity } from '../lib/api/canon';
+import { checkDraft, checkPassage, createDraft, deleteDraft, fetchDrafts, fetchRevisions, previewDraftExtraction, queueDraftExtraction, restoreRevision, updateDraft } from '../lib/api/drafts';
+import { applySuggestion, exportMarkdown, fetchConsistencyIssues, fetchConsistencyReport, fetchHealth, fetchSuggestions, generateAgentic, updateConsistencyIssue } from '../lib/api/generation';
+import { createGraphView, createPlanningBoard, createPlanningCard, createTimelineEvent, fetchGraphViews, fetchPlanningBoards, fetchTimelineEvents } from '../lib/api/planning';
+import { deleteWorld, fetchWorld } from '../lib/api/worlds';
 import {
-  applySuggestion,
-  checkDraft,
-  checkPassage,
-  createTimelineEvent,
-  createEntity,
-  createDraft,
-  createGraphView,
-  createPlanningBoard,
-  createPlanningCard,
-  createRelationship,
-  deleteDraft,
-  deleteEntity,
-  deleteWorld,
-  deleteRelationship,
-  exportMarkdown,
-  fetchConsistencyIssues,
-  fetchConsistencyReport,
-  fetchEntities,
-  fetchGraphViews,
-  fetchHealth,
-  fetchDrafts,
-  fetchPlanningBoards,
-  fetchRelationships,
-  fetchRevisions,
-  fetchSuggestions,
-  fetchTimelineEvents,
-  fetchWorld,
-  generateAgentic,
-  previewDraftExtraction,
-  queueDraftExtraction,
-  restoreRevision,
-  updateConsistencyIssue,
   type ConsistencyIssueState,
   type ConsistencyIssueStatus,
   type DraftExtractionCandidate,
   type DraftExtractionCandidateKind,
-  updateEntity,
-  updateDraft,
   type ConsistencyReport,
   type DraftPassage,
   type Entity,
@@ -74,58 +45,23 @@ import {
   type RevisionVersion,
   type TimelineEvent,
   type World,
-} from '../lib/api';
+} from '../lib/apiTypes';
 import { buildWorldGraph, searchWorldGraph } from '../lib/worldGraph';
 import { displayEntityType as displayType, formatDateTime } from '../utils/format';
 import './WorldDetail.css';
+import {
+  DRAFT_CANDIDATE_KINDS,
+  DRAFT_STATUSES,
+  ENTITY_GROUPS,
+  ENTITY_TYPES,
+  EXPORT_PRESETS,
+  GRAPH_LAYOUTS,
+  PROMPTS,
+  TEMPLATE_FIELDS,
+} from './worldDetail/constants';
+import { buildSuggestionApplyPayload, type SuggestionApplyMode } from './worldDetail/suggestions';
 
 const WorldGraphView = lazy(() => import('./WorldGraphView'));
-
-const ENTITY_GROUPS = ['Character', 'Location', 'Faction', 'Concept', 'Event', 'Other'];
-const ENTITY_TYPES = ['Character', 'Location', 'Faction', 'Concept', 'Event', 'Other'];
-const EXPORT_PRESETS = [
-  ['full_bible', 'Full Bible'],
-  ['character_dossier', 'Characters'],
-  ['faction_brief', 'Factions'],
-  ['location_gazetteer', 'Locations'],
-  ['timeline_only', 'Timeline'],
-  ['obsidian', 'Obsidian'],
-] as const;
-const GRAPH_LAYOUTS: { value: GraphLayoutMode; label: string }[] = [
-  { value: 'manual', label: 'Manual' },
-  { value: 'force', label: 'Relationship' },
-  { value: 'type_columns', label: 'Type columns' },
-  { value: 'faction_clusters', label: 'Faction clusters' },
-  { value: 'timeline_order', label: 'Timeline' },
-];
-const DRAFT_STATUSES: DraftPassage['status'][] = ['draft', 'revising', 'ready', 'archived'];
-const DRAFT_CANDIDATE_KINDS: DraftExtractionCandidateKind[] = ['entity', 'relationship', 'timeline_event', 'lore_note'];
-const TEMPLATE_FIELDS: Record<string, string[]> = {
-  Character: ['goal', 'secret', 'fear', 'voice'],
-  Location: ['hazards', 'economy', 'culture', 'landmark'],
-  Faction: ['resources', 'rivals', 'public_goal', 'secret'],
-  Event: ['causes', 'consequences', 'participants', 'date'],
-  Concept: ['rules', 'limits', 'cost', 'symbols'],
-  Other: ['role', 'origin', 'constraints'],
-};
-const PROMPTS = [
-  {
-    label: 'Faction Pressure',
-    value: 'For The Ember Archipelago, generate three factions with public goals, secret leverage, scarce resources, and one unresolved conflict tying each faction to existing canon.',
-  },
-  {
-    label: 'Timeline Crisis',
-    value: 'For The Ember Archipelago, generate five escalating timeline events around the Night of Falling Bells, each with a cause, consequence, and entity most changed by it.',
-  },
-  {
-    label: 'Secrets',
-    value: 'For The Ember Archipelago, generate four canon-safe secrets. Each secret should name who knows it, who would suffer if revealed, and which saved entity it complicates.',
-  },
-  {
-    label: 'Expand Selected',
-    value: 'Expand the selected entity with history, sensory details, story pressure, a secret, and two relationship hooks that can be added to canon.',
-  },
-];
 
 type EntityForm = Pick<Entity, 'name' | 'entity_type' | 'description' | 'structured_fields'>;
 type DraftForm = Pick<DraftPassage, 'title' | 'body' | 'status' | 'linked_entity_ids' | 'linked_relationship_ids' | 'linked_timeline_event_ids'>;
@@ -1084,18 +1020,17 @@ const WorldDetail = () => {
 
   const handleSuggestionApply = async (
     suggestion: GenerationSuggestion,
-    mode: 'create_entity' | 'append_to_entity' | 'replace_entity' | 'discard' | 'create_relationship' | 'create_timeline_event' | 'create_lore_note',
+    mode: SuggestionApplyMode,
   ) => {
     if (!id) return;
     setBusy(true);
     setErrorMessage('');
     try {
-      const result = await applySuggestion(id, suggestion.id, {
-        mode,
-        entity_id: mode === 'create_entity' || mode === 'discard' ? undefined : selectedEntityId ?? undefined,
+      const result = await applySuggestion(id, suggestion.id, buildSuggestionApplyPayload(suggestion, mode, {
+        entityId: selectedEntityId ?? undefined,
         name: generatedName.trim() || suggestion.suggested_name || 'Generated Lore',
-        entity_type: generatedType || suggestion.suggested_type || 'Concept',
-      });
+        entityType: generatedType || suggestion.suggested_type || 'Concept',
+      }));
       await Promise.all([refreshEntities(), refreshReviewData()]);
       if (result.entity?.id) setSelectedEntityId(result.entity.id);
       setStatusMessage(mode === 'discard' ? 'Suggestion discarded.' : 'Suggestion applied to canon.');

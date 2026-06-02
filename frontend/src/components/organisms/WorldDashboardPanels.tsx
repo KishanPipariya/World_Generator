@@ -1,6 +1,6 @@
 import { BookOpen, Database, FolderOpen, Shield } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import type { World } from '../../lib/api';
+import type { World } from '../../lib/apiTypes';
 import { RecentWorldLink, SectionHeader } from '../molecules';
 
 export function WorldDashboardPanels({

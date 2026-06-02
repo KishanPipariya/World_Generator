@@ -14,7 +14,7 @@ from app.config import load_settings
 from app.deps import get_auth_service, get_world_service
 from app.schemas.auth import UserRead
 from app.services.auth_service import AuthService
-from app.services.world_service import WorldService, reset_current_owner_id, set_current_owner_id
+from app.services.world import WorldService, reset_current_owner_id, set_current_owner_id
 
 _bearer = HTTPBearer(auto_error=False)
 _login_attempts: dict[str, deque[float]] = defaultdict(deque)

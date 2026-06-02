@@ -10,18 +10,17 @@ import {
   Search,
   Tags,
 } from 'lucide-react';
+import { fetchLoreNotes } from '../lib/api/campaign';
+import { fetchEntities, fetchRelationships } from '../lib/api/canon';
+import { fetchTimelineEvents } from '../lib/api/planning';
+import { fetchWorld } from '../lib/api/worlds';
 import {
-  fetchEntities,
-  fetchLoreNotes,
-  fetchRelationships,
-  fetchTimelineEvents,
-  fetchWorld,
   type Entity,
   type LoreNote,
   type Relationship,
   type TimelineEvent,
   type World,
-} from '../lib/api';
+} from '../lib/apiTypes';
 import './WorldWiki.css';
 
 const formatDate = (value: string) => new Date(value).toLocaleDateString();

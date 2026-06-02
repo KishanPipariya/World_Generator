@@ -1,7 +1,9 @@
 import { useState, type FormEvent } from 'react';
 import { Globe } from 'lucide-react';
 import { AxiosError } from 'axios';
-import { AUTH_TOKEN_KEY, fetchMe, loginUser, registerUser, type User } from '../../lib/api';
+import { AUTH_TOKEN_KEY } from '../../lib/apiClient';
+import { fetchMe, loginUser, registerUser } from '../../lib/api/auth';
+import type { User } from '../../lib/apiTypes';
 import { Alert, Button } from '../atoms';
 
 export function AuthGate({ onAuthenticated }: { onAuthenticated: (user: User) => void }) {

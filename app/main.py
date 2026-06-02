@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.auth import router as auth_router
 from app.api.routes.health import router as health_router
-from app.api.routes.worlds import router as worlds_router
+from app.api.routes.world_routes import router as worlds_router
 
 app = FastAPI(
     title="Literary World Generator",
