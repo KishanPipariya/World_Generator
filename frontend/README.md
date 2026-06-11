@@ -1,6 +1,6 @@
 # World Generator Frontend
 
-React, TypeScript, and Vite client for the world-building workspace.
+React, TypeScript, and Vite client for the world wiki reader and canon tools.
 
 ## Local Commands
 
@@ -20,6 +20,16 @@ React, TypeScript, and Vite client for the world-building workspace.
 
 The default API base URL is `http://localhost:8000/api/v1`. Set `VITE_API_BASE_URL` when pointing the frontend at a different backend.
 
-## Workspace Notes
+## Route Notes
 
-The main authoring surface is `src/pages/WorldDetail.tsx`; extracted helpers and stable workspace constants live under `src/pages/worldDetail/`. The dedicated DM workflow is `src/pages/WorldDm.tsx` and shares suggestion application helpers with the main workspace.
+The primary world destination is `src/pages/WorldWiki.tsx` at `/wiki/:worldId`.
+Dashboards, recent links, world cards, and post-create/demo flows should open
+that route by default.
+
+The editable workbench remains `src/pages/WorldDetail.tsx` at `/worlds/:id`.
+Keep links to it explicit and secondary with labels such as Workbench or Edit
+Canon. Extracted helpers and stable workbench constants live under
+`src/pages/worldDetail/`.
+
+The dedicated DM workflow is `src/pages/WorldDm.tsx` at `/worlds/:id/dm` and
+shares suggestion application helpers with the workbench.

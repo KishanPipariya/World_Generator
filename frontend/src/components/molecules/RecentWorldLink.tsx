@@ -5,7 +5,7 @@ import { formatDate } from '../../utils/format';
 
 export function RecentWorldLink({ world }: { world: World }) {
   return (
-    <Link className="recent-world" to={`/worlds/${world.id}`}>
+    <Link className="recent-world" to={`/wiki/${world.id}`}>
       <span>
         <strong>{world.title}</strong>
         <small>{world.tone || 'No tone set'}</small>

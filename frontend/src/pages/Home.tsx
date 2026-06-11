@@ -34,7 +34,7 @@ const Home = () => {
     setErrorMessage('');
     try {
       const demo = await createDemoWorld();
-      navigate(`/worlds/${demo.world.id}`);
+      navigate(`/wiki/${demo.world.id}`);
     } catch {
       setErrorMessage('Unable to create the demo world.');
     } finally {
@@ -46,9 +46,9 @@ const Home = () => {
     <div className="home-container page-enter">
       <PageHeader
         className="dashboard-header"
-          kicker="World authoring workspace"
-          title="Continue building your canon"
-          subtitle="Open a recent world, start a blank setting, or load the demo workspace."
+          kicker="World wiki and canon"
+          title="Continue exploring your canon"
+          subtitle="Open a recent world wiki, start a blank setting, or load the demo canon."
           actions={(
             <div className="dashboard-actions">
               <ButtonLink to="/worlds/new" variant="primary">

@@ -9,6 +9,7 @@ import {
   Link2,
   Search,
   Tags,
+  Wrench,
 } from 'lucide-react';
 import { fetchLoreNotes } from '../lib/api/campaign';
 import { fetchEntities, fetchRelationships } from '../lib/api/canon';
@@ -287,6 +288,11 @@ const WorldWiki = () => {
           <BookOpen size={20} />
           <span>{world.title}</span>
         </button>
+
+        <Link to={`/worlds/${world.id}`} className="wiki-back-link">
+          <Wrench size={18} />
+          <span>Edit Canon</span>
+        </Link>
 
         <label className="wiki-search">
           <span className="sr-only">Search canon</span>

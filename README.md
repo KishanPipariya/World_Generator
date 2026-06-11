@@ -3,7 +3,10 @@
 Literary World Generator is a FastAPI and React application for managing a
 graph-first fiction world bible. It lets writers create worlds, save canon
 entities and relationships, plan timelines, review generated lore, check draft
-passages against canon, and export world material for writing tools.
+passages against canon, read a wiki-first canon view, and export world material
+for writing tools. The default frontend world experience is the reader at
+`/wiki/:worldId`; the editable canon workbench remains available at
+`/worlds/:id`.
 
 For longer-term product direction, see
 [docs/FUTURE_FEATURES.md](docs/FUTURE_FEATURES.md).
@@ -11,6 +14,8 @@ For longer-term product direction, see
 ## Current Features
 
 - World CRUD with title, tone, era notes, and seed metadata.
+- Wiki-first reader for browsing world overviews, canon entities,
+  relationships, timelines, and visible lore notes.
 - Entity CRUD with structured fields for searchable canon details.
 - Relationship CRUD with category, stance, strength, history, color, and display
   priority metadata.
@@ -91,6 +96,10 @@ npm run dev
 ```
 
 Vite will print the local app URL, usually `http://localhost:5173`.
+
+After login, the dashboard, recent world links, world cards, demo creation, and
+new world creation open the wiki reader by default. Use the Workbench/Edit Canon
+links for canon maintenance, drafts, planning, graph views, and exports.
 
 ## LLM Configuration
 
@@ -250,4 +259,7 @@ the Git command with `SKIP_HOOKS=1`.
 - `app/services/llm_service.py` - Optional OpenRouter integration using the
   OpenAI Python SDK.
 - `frontend/` - React and Vite frontend.
+  - `/wiki/:worldId` is the primary world reader route.
+  - `/worlds/:id` is the editable canon workbench route.
+  - `/worlds/:id/dm` is the DM workflow route.
 - `tests/` - Pytest coverage for API, service, DB, and LLM behavior.

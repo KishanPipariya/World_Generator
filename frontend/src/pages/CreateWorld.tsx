@@ -33,7 +33,7 @@ const CreateWorld = () => {
         era_notes: formData.era_notes || null,
         seed: formData.seed || null,
       });
-      navigate(`/worlds/${result.id}`);
+      navigate(`/wiki/${result.id}`);
     } catch (err) {
       console.error(err);
       setErrorMessage('Unable to create this world. Review the form and try again.');
@@ -46,7 +46,7 @@ const CreateWorld = () => {
     <div className="create-world-container">
       <div className="create-header">
         <h1>Forge a New World</h1>
-        <p className="text-secondary">Define the foundational properties of your universe.</p>
+        <p className="text-secondary">Define the foundation for a world wiki and canon index.</p>
       </div>
 
       {errorMessage && (

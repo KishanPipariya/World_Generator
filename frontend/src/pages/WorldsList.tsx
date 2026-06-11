@@ -28,7 +28,7 @@ const WorldsList = () => {
     setErrorMessage('');
     try {
       const demo = await createDemoWorld();
-      navigate(`/worlds/${demo.world.id}`);
+      navigate(`/wiki/${demo.world.id}`);
     } catch {
       setErrorMessage('Unable to create the demo world.');
     } finally {
@@ -70,7 +70,7 @@ const WorldsList = () => {
       <div className="worlds-header">
         <div>
           <h1>Your Worlds</h1>
-          <p className="text-secondary">Manage and explore your created literary universes.</p>
+          <p className="text-secondary">Explore world wikis and manage canon tools when needed.</p>
         </div>
         <div className="world-actions">
           <Button variant="secondary" onClick={handleCreateDemo} disabled={creatingDemo}>
@@ -92,7 +92,7 @@ const WorldsList = () => {
         <EmptyState className="glass">
           <Globe2 size={48} className="text-muted" aria-hidden="true" />
           <h3>No worlds found</h3>
-          <p>Create a world from scratch or load a complete demo for a faster walkthrough.</p>
+          <p>Create a world from scratch or load a complete demo to start exploring the wiki.</p>
           <div className="world-actions mt-4">
             <Button variant="secondary" onClick={handleCreateDemo} disabled={creatingDemo}>
               <Sparkles size={18} />

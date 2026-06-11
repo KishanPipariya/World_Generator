@@ -39,7 +39,7 @@ function App() {
   };
 
   if (checkingAuth) {
-    return <LoadingState>Loading workspace...</LoadingState>;
+    return <LoadingState>Loading canon...</LoadingState>;
   }
 
   if (!user) {
@@ -49,7 +49,7 @@ function App() {
   return (
     <Router>
       <AppShell user={user} onLogout={handleLogout}>
-        <Suspense fallback={<LoadingState>Loading workspace...</LoadingState>}>
+        <Suspense fallback={<LoadingState>Loading canon...</LoadingState>}>
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/worlds/*" element={<Worlds />} />

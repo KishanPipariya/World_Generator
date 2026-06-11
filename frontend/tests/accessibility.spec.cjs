@@ -12,6 +12,21 @@ const world = {
   created_at: createdAt,
 };
 
+const createdWorld = {
+  ...world,
+  id: 'created-world',
+  title: 'Created Test World',
+  tone: 'Mystery',
+  era_notes: 'Fresh canon for a new wiki.',
+  seed: 'created',
+};
+
+const demoCreatedWorld = {
+  ...world,
+  id: 'demo-created-world',
+  title: 'Demo Created World',
+};
+
 const user = {
   id: 'user-1',
   username: 'test-writer',
@@ -117,6 +132,11 @@ const timelineEvents = [
 async function mockApi(page) {
   let mockDrafts = [];
   let mockSuggestions = suggestions.map((suggestion) => ({ ...suggestion }));
+  let mockWorlds = [world];
+
+  const getWorldById = (worldId) => mockWorlds.find((item) => item.id === worldId)
+    ?? (worldId === createdWorld.id ? createdWorld : null)
+    ?? (worldId === demoCreatedWorld.id ? demoCreatedWorld : null);
 
   await page.route('http://localhost:8000/api/v1/**', async (route) => {
     const url = new URL(route.request().url());
@@ -124,11 +144,35 @@ async function mockApi(page) {
     const method = route.request().method();
 
     if (path === '/auth/me') return route.fulfill({ json: user });
-    if (path === '/worlds') return route.fulfill({ json: [world] });
-    if (path === `/worlds/${world.id}`) return route.fulfill({ json: world });
-    if (path === `/worlds/${world.id}/entities`) return route.fulfill({ json: { entities } });
-    if (path === `/worlds/${world.id}/relationships`) return route.fulfill({ json: { relationships } });
-    if (path === `/worlds/${world.id}/timeline`) return route.fulfill({ json: { events: timelineEvents } });
+    if (path === '/worlds' && method === 'GET') return route.fulfill({ json: mockWorlds });
+    if (path === '/worlds' && method === 'POST') {
+      const body = route.request().postDataJSON();
+      const newWorld = {
+        ...createdWorld,
+        title: body.title,
+        tone: body.tone,
+        era_notes: body.era_notes,
+        seed: body.seed,
+      };
+      mockWorlds = [newWorld, ...mockWorlds.filter((item) => item.id !== newWorld.id)];
+      return route.fulfill({ status: 201, json: newWorld });
+    }
+    if (path === '/worlds/demo' && method === 'POST') {
+      mockWorlds = [demoCreatedWorld, ...mockWorlds.filter((item) => item.id !== demoCreatedWorld.id)];
+      return route.fulfill({ status: 201, json: { world: demoCreatedWorld } });
+    }
+
+    const worldMatch = path.match(/^\/worlds\/([^/]+)$/);
+    if (worldMatch && method === 'GET') {
+      const requestedWorld = getWorldById(worldMatch[1]);
+      return requestedWorld
+        ? route.fulfill({ json: requestedWorld })
+        : route.fulfill({ status: 404, json: { detail: 'World not found' } });
+    }
+
+    if (path.match(/^\/worlds\/[^/]+\/entities$/)) return route.fulfill({ json: { entities } });
+    if (path.match(/^\/worlds\/[^/]+\/relationships$/)) return route.fulfill({ json: { relationships } });
+    if (path.match(/^\/worlds\/[^/]+\/timeline$/)) return route.fulfill({ json: { events: timelineEvents } });
     if (path === `/worlds/${world.id}/suggestions`) return route.fulfill({ json: { suggestions: mockSuggestions } });
     if (path === `/worlds/${world.id}/consistency/issues`) return route.fulfill({ json: { issues: consistencyIssues } });
     if (path === `/worlds/${world.id}/graph-views`) return route.fulfill({ json: { views: [] } });
@@ -250,9 +294,34 @@ test.beforeEach(async ({ page }) => {
 
 test('dashboard home route exposes recent worlds and quick links', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Continue building your canon' })).toBeVisible();
-  await expect(page.getByRole('link', { name: /Ember Archipelago/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Continue exploring your canon' })).toBeVisible();
+  await expect(page.getByRole('link', { name: /Ember Archipelago/ })).toHaveAttribute('href', `/wiki/${world.id}`);
   await expect(page.getByRole('link', { name: /World Management/ })).toBeVisible();
+  await expect(page.getByRole('link', { name: /Latest Wiki/ })).toHaveAttribute('href', `/wiki/${world.id}`);
+  await expect(page.getByRole('link', { name: /Workbench/ })).toHaveAttribute('href', `/worlds/${world.id}`);
+});
+
+test('world cards open the wiki by default and expose the workbench', async ({ page }) => {
+  await page.goto('/worlds');
+  await expect(page.getByRole('link', { name: world.title })).toHaveAttribute('href', `/wiki/${world.id}`);
+  await expect(page.getByRole('link', { name: /Island city-states/ })).toHaveAttribute('href', `/wiki/${world.id}`);
+  await expect(page.getByRole('link', { name: /Workbench/ })).toHaveAttribute('href', `/worlds/${world.id}`);
+
+  await page.goto(`/wiki/${world.id}`);
+  await expect(page.getByRole('link', { name: /Edit Canon/ })).toHaveAttribute('href', `/worlds/${world.id}`);
+});
+
+test('new and demo world flows land on the wiki', async ({ page }) => {
+  await page.goto('/worlds/new');
+  await page.getByRole('textbox', { name: /World Title/ }).fill(createdWorld.title);
+  await page.getByRole('button', { name: 'Create World' }).click();
+  await page.waitForURL(`**/wiki/${createdWorld.id}`);
+  await expect(page.getByRole('heading', { name: createdWorld.title })).toBeVisible();
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Demo World' }).click();
+  await page.waitForURL(`**/wiki/${demoCreatedWorld.id}`);
+  await expect(page.getByRole('heading', { name: demoCreatedWorld.title })).toBeVisible();
 });
 
 test('worlds search and tone filter empty state are usable', async ({ page }) => {

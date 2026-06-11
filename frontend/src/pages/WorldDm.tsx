@@ -249,7 +249,7 @@ const WorldDm = () => {
       <div className="back-nav">
         <Link to={`/worlds/${world.id}`} className="back-link">
           <ArrowLeft size={20} />
-          <span>Back to Author Workspace</span>
+          <span>Back to Workbench</span>
         </Link>
       </div>
 

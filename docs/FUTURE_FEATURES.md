@@ -125,7 +125,7 @@ lore visibility, consistency reports, LLM suggestions, and Markdown exports.
 ### Local-First Reliability
 
 - Add backup and restore workflows for local project data.
-- Improve degraded-mode messaging when Neo4j or the configured LLM provider is
+- Improve degraded-mode messaging when SQLite storage or the configured LLM provider is
   unavailable.
 - Add operator-facing readiness checks for database connectivity, migrations,
   authentication settings, and LLM configuration.

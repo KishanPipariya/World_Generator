@@ -1,4 +1,4 @@
-import { BookOpen, Database, FolderOpen, Shield } from 'lucide-react';
+import { BookOpen, Database, FolderOpen, Shield, Wrench } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { World } from '../../lib/apiTypes';
 import { RecentWorldLink, SectionHeader } from '../molecules';
@@ -11,7 +11,7 @@ export function WorldDashboardPanels({
   recentWorlds: World[];
 }) {
   return (
-    <section className="dashboard-grid" aria-label="Authoring dashboard">
+    <section className="dashboard-grid" aria-label="World wiki dashboard">
       <div className="dashboard-panel recent-panel">
         <SectionHeader icon={<FolderOpen size={18} aria-hidden="true" />} title="Recent Worlds" />
         {loading ? (
@@ -19,7 +19,7 @@ export function WorldDashboardPanels({
         ) : recentWorlds.length === 0 ? (
           <div className="dashboard-empty">
             <Database size={26} aria-hidden="true" />
-            <p>No worlds yet. Create one or use the demo to explore the workspace.</p>
+            <p>No worlds yet. Create one or use the demo to explore the wiki.</p>
           </div>
         ) : (
           <div className="recent-world-list">
@@ -39,11 +39,18 @@ export function WorldDashboardPanels({
         </Link>
         {recentWorlds[0] ? (
           <>
-            <Link to={`/worlds/${recentWorlds[0].id}`} className="quick-link">
-              <Database size={18} aria-hidden="true" />
+            <Link to={`/wiki/${recentWorlds[0].id}`} className="quick-link">
+              <BookOpen size={18} aria-hidden="true" />
               <span>
-                <strong>Workspace</strong>
-                <small>Canon, drafts, timeline, planning, and graph tools.</small>
+                <strong>Latest Wiki</strong>
+                <small>Read the current world bible view.</small>
+              </span>
+            </Link>
+            <Link to={`/worlds/${recentWorlds[0].id}`} className="quick-link">
+              <Wrench size={18} aria-hidden="true" />
+              <span>
+                <strong>Workbench</strong>
+                <small>Maintain canon, drafts, timeline, planning, and graph tools.</small>
               </span>
             </Link>
             <Link to={`/worlds/${recentWorlds[0].id}/dm`} className="quick-link">
@@ -53,16 +60,9 @@ export function WorldDashboardPanels({
                 <small>Sessions, lore notes, clocks, impact review, and handouts.</small>
               </span>
             </Link>
-            <Link to={`/wiki/${recentWorlds[0].id}`} className="quick-link">
-              <BookOpen size={18} aria-hidden="true" />
-              <span>
-                <strong>Wiki</strong>
-                <small>Read the latest world bible view.</small>
-              </span>
-            </Link>
           </>
         ) : (
-          <p className="text-muted">Quick wiki and workspace links appear after a world exists.</p>
+          <p className="text-muted">Quick wiki and workbench links appear after a world exists.</p>
         )}
       </div>
     </section>

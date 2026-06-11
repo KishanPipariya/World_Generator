@@ -1,4 +1,4 @@
-import { BookOpen, Clock, Shield, Trash2 } from 'lucide-react';
+import { BookOpen, Clock, Shield, Trash2, Wrench } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { World } from '../../lib/apiTypes';
 import { Badge } from '../atoms';
@@ -8,22 +8,26 @@ export function WorldCard({ world, onDelete }: { world: World; onDelete: (world:
   return (
     <article className="world-card">
       <div className="world-card-header">
-        <Link to={`/worlds/${world.id}`} className="world-card-title">
+        <Link to={`/wiki/${world.id}`} className="world-card-title">
           <h2>{world.title}</h2>
         </Link>
       </div>
-      <Link to={`/worlds/${world.id}`} className="world-card-body">
+      <Link to={`/wiki/${world.id}`} className="world-card-body">
         {world.tone && <Badge variant="primary">{world.tone}</Badge>}
         <p className="world-era">{world.era_notes || 'No era notes'}</p>
       </Link>
       <div className="world-card-footer">
-        <Link to={`/worlds/${world.id}`} className="world-card-action">
+        <Link to={`/wiki/${world.id}`} className="world-card-action">
           <Clock size={16} aria-hidden="true" />
           <span>{formatDate(world.created_at)}</span>
         </Link>
         <Link to={`/wiki/${world.id}`} className="world-card-action">
           <BookOpen size={16} aria-hidden="true" />
           <span>Wiki</span>
+        </Link>
+        <Link to={`/worlds/${world.id}`} className="world-card-action">
+          <Wrench size={16} aria-hidden="true" />
+          <span>Workbench</span>
         </Link>
         <Link to={`/worlds/${world.id}/dm`} className="world-card-action">
           <Shield size={16} aria-hidden="true" />
