@@ -12,7 +12,7 @@ export function Navigation({ user, onLogout }: { user: User; onLogout: () => voi
     <nav className="navbar glass" aria-label="Primary">
       <div className="nav-brand">
         <Globe className="nav-brand-icon" size={28} aria-hidden="true" />
-        <span>Literary World Generator</span>
+        <span>Worldwright</span>
       </div>
       <div className="nav-links">
         <Link to="/" className={`nav-link ${homeActive ? 'active' : ''}`} aria-current={homeActive ? 'page' : undefined}>Home</Link>

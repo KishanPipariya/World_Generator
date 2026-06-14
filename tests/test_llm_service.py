@@ -103,7 +103,7 @@ def test_openrouter_backend_uses_openai_sdk_chat_completion_request() -> None:
     s = _base_settings(
         openrouter_model="m",
         openrouter_http_referer="https://example.test",
-        openrouter_app_title="World Generator",
+        openrouter_app_title="Worldwright",
         llm_max_tokens=16,
         llm_temperature=0.1,
     )
@@ -121,7 +121,7 @@ def test_openrouter_backend_uses_openai_sdk_chat_completion_request() -> None:
         temperature=0.1,
         extra_headers={
             "HTTP-Referer": "https://example.test",
-            "X-OpenRouter-Title": "World Generator",
+            "X-OpenRouter-Title": "Worldwright",
         },
     )
 

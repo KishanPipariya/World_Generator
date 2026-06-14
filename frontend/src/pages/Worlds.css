@@ -1,7 +1,20 @@
 .worlds-list-container {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 2rem;
+}
+
+.worlds-list-container::before {
+  content: "";
+  position: absolute;
+  inset: -1.5rem -6vw auto;
+  height: 18rem;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 12% 10%, rgba(45, 212, 191, 0.12), transparent 18rem),
+    radial-gradient(circle at 72% 0%, rgba(245, 200, 106, 0.1), transparent 20rem);
 }
 
 .worlds-header {
@@ -10,6 +23,11 @@
   align-items: center;
   gap: 1rem;
   flex-wrap: wrap;
+  padding: 1.25rem;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-lg);
+  background: var(--panel-bg-soft);
+  box-shadow: var(--shadow-sm);
 }
 
 .worlds-header h1 {
@@ -44,18 +62,22 @@
 .world-card {
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--panel-border);
   border-radius: var(--radius-md);
   padding: 1.25rem;
   gap: 1rem;
-  transition: all var(--transition-normal);
+  transition: transform var(--motion-rise), box-shadow var(--transition-normal), border-color var(--transition-fast), background var(--transition-fast);
   height: 100%;
-  background: rgba(19, 19, 28, 0.72);
+  background:
+    linear-gradient(145deg, rgba(28, 25, 42, 0.88), rgba(10, 9, 16, 0.86)),
+    radial-gradient(circle at 0% 0%, rgba(245, 200, 106, 0.07), transparent 16rem);
+  box-shadow: var(--shadow-sm);
 }
 
 .world-card:hover {
-  border-color: rgba(96, 165, 250, 0.4);
-  box-shadow: 0 8px 24px -14px rgba(59, 130, 246, 0.35);
+  transform: translateY(-3px);
+  border-color: rgba(245, 200, 106, 0.36);
+  box-shadow: var(--hover-glow);
 }
 
 .world-card-header {
@@ -111,9 +133,10 @@
   justify-content: space-between;
   gap: 1rem;
   padding: 0.75rem;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--panel-border);
   border-radius: var(--radius-md);
-  background: rgba(19, 19, 28, 0.64);
+  background: rgba(18, 17, 28, 0.78);
+  box-shadow: var(--shadow-sm);
 }
 
 .world-search,
@@ -122,9 +145,9 @@
   display: flex;
   align-items: center;
   gap: 0.6rem;
-  border: 1px solid var(--border-color);
+  border: 1px solid rgba(245, 200, 106, 0.16);
   border-radius: var(--radius-sm);
-  background: rgba(0, 0, 0, 0.16);
+  background: rgba(5, 4, 10, 0.32);
   color: var(--text-muted);
 }
 
@@ -160,13 +183,13 @@
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  color: #bfdbfe;
+  color: #99f6e4;
   font-size: 0.9rem;
   font-weight: 600;
 }
 
 .world-card-action:hover {
-  color: var(--text-primary);
+  color: var(--accent-gold);
 }
 
 .text-danger-button {
@@ -186,9 +209,9 @@
 
 .compact-empty {
   padding: 2.5rem;
-  border: 1px dashed var(--border-color);
+  border: 1px dashed rgba(245, 200, 106, 0.28);
   border-radius: var(--radius-md);
-  background: rgba(19, 19, 28, 0.58);
+  background: var(--panel-bg-soft);
 }
 
 @media (max-width: 700px) {

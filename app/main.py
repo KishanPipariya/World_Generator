@@ -6,7 +6,7 @@ from app.api.routes.health import router as health_router
 from app.api.routes.world_routes import router as worlds_router
 
 app = FastAPI(
-    title="Literary World Generator",
+    title="Worldwright",
     description="API for literary world-building and future generator features.",
     version="0.1.0",
 )

@@ -1,6 +1,6 @@
-# Literary World Generator
+# Worldwright
 
-Literary World Generator is a FastAPI and React application for managing a
+Worldwright is a FastAPI and React application for managing a
 graph-first fiction world bible. It lets writers create worlds, save canon
 entities and relationships, plan timelines, review generated lore, check draft
 passages against canon, read a wiki-first canon view, and export world material
@@ -57,21 +57,21 @@ npm install
 ```
 
 SQLite is used by default and initialized automatically at
-`./data/world_generator.sqlite3`. Override the path with:
+`./data/worldwright.sqlite3`. Override the path with:
 
 ```text
-WORLD_GENERATOR_SQLITE_PATH=./data/world_generator.sqlite3
+WORLDWRIGHT_SQLITE_PATH=./data/worldwright.sqlite3
 ```
 
 Authentication uses open signup by default. Configure these before deploying:
 
 ```text
-WORLD_GENERATOR_JWT_SECRET=<strong random secret>
-WORLD_GENERATOR_JWT_EXPIRES_MINUTES=1440
-WORLD_GENERATOR_ALLOW_SIGNUP=true
+WORLDWRIGHT_JWT_SECRET=<strong random secret>
+WORLDWRIGHT_JWT_EXPIRES_MINUTES=1440
+WORLDWRIGHT_ALLOW_SIGNUP=true
 ```
 
-Set `WORLD_GENERATOR_ALLOW_SIGNUP=false` after provisioning users if public
+Set `WORLDWRIGHT_ALLOW_SIGNUP=false` after provisioning users if public
 signup should be closed.
 
 ## Running Locally
@@ -104,7 +104,7 @@ links for canon maintenance, drafts, planning, graph views, and exports.
 ## LLM Configuration
 
 LLM use is optional. The app supports OpenRouter or disabled mode through
-`WORLD_GENERATOR_LLM_BACKEND`. OpenRouter calls are made through the OpenAI
+`WORLDWRIGHT_LLM_BACKEND`. OpenRouter calls are made through the OpenAI
 Python SDK using OpenRouter's OpenAI-compatible `base_url`.
 
 - `openrouter`: use the OpenRouter chat completions API when both an API key and
@@ -114,20 +114,20 @@ Python SDK using OpenRouter's OpenAI-compatible `base_url`.
 Useful variables:
 
 ```text
-WORLD_GENERATOR_LLM_BACKEND=openrouter
-WORLD_GENERATOR_OPENROUTER_API_KEY=sk-or-...
-WORLD_GENERATOR_OPENROUTER_MODEL=deepseek/deepseek-v4-flash:free
-WORLD_GENERATOR_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-WORLD_GENERATOR_OPENROUTER_HTTP_REFERER=https://your-app.example
-WORLD_GENERATOR_OPENROUTER_APP_TITLE=Literary World Generator
-WORLD_GENERATOR_LLM_MAX_TOKENS=768
-WORLD_GENERATOR_LLM_TEMPERATURE=0.65
+WORLDWRIGHT_LLM_BACKEND=openrouter
+WORLDWRIGHT_OPENROUTER_API_KEY=sk-or-...
+WORLDWRIGHT_OPENROUTER_MODEL=deepseek/deepseek-v4-flash:free
+WORLDWRIGHT_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+WORLDWRIGHT_OPENROUTER_HTTP_REFERER=https://your-app.example
+WORLDWRIGHT_OPENROUTER_APP_TITLE=Worldwright
+WORLDWRIGHT_LLM_MAX_TOKENS=768
+WORLDWRIGHT_LLM_TEMPERATURE=0.65
 ```
 
-`WORLD_GENERATOR_OPENROUTER_BASE_URL` should normally stay at
+`WORLDWRIGHT_OPENROUTER_BASE_URL` should normally stay at
 `https://openrouter.ai/api/v1`; it is passed to `OpenAI(base_url=...)`.
-`WORLD_GENERATOR_OPENROUTER_HTTP_REFERER` and
-`WORLD_GENERATOR_OPENROUTER_APP_TITLE` are optional OpenRouter attribution
+`WORLDWRIGHT_OPENROUTER_HTTP_REFERER` and
+`WORLDWRIGHT_OPENROUTER_APP_TITLE` are optional OpenRouter attribution
 headers sent with each chat completion request.
 
 `GET /api/v1/health` only reports public service status. LLM mode details are

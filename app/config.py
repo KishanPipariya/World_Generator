@@ -29,29 +29,29 @@ class Settings:
 def load_settings() -> Settings:
     load_dotenv()
 
-    raw = (os.environ.get("WORLD_GENERATOR_LLM_BACKEND") or "openrouter").strip().lower()
+    raw = (os.environ.get("WORLDWRIGHT_LLM_BACKEND") or "openrouter").strip().lower()
     if raw not in ("openrouter", "none"):
         raw = "openrouter"
     backend: Literal["openrouter", "none"] = raw  # type: ignore[assignment]
 
     openrouter_base_url = os.environ.get(
-        "WORLD_GENERATOR_OPENROUTER_BASE_URL",
+        "WORLDWRIGHT_OPENROUTER_BASE_URL",
         "https://openrouter.ai/api/v1",
     ).rstrip("/")
 
-    jwt_secret = os.environ.get("WORLD_GENERATOR_JWT_SECRET", "dev-insecure-change-me-at-least-32-bytes")
+    jwt_secret = os.environ.get("WORLDWRIGHT_JWT_SECRET", "dev-insecure-change-me-at-least-32-bytes")
 
     return Settings(
-        sqlite_path=os.environ.get("WORLD_GENERATOR_SQLITE_PATH", "./data/world_generator.sqlite3"),
+        sqlite_path=os.environ.get("WORLDWRIGHT_SQLITE_PATH", "./data/worldwright.sqlite3"),
         llm_backend=backend,
-        openrouter_api_key=os.environ.get("WORLD_GENERATOR_OPENROUTER_API_KEY"),
-        openrouter_model=os.environ.get("WORLD_GENERATOR_OPENROUTER_MODEL"),
+        openrouter_api_key=os.environ.get("WORLDWRIGHT_OPENROUTER_API_KEY"),
+        openrouter_model=os.environ.get("WORLDWRIGHT_OPENROUTER_MODEL"),
         openrouter_base_url=openrouter_base_url,
-        openrouter_http_referer=os.environ.get("WORLD_GENERATOR_OPENROUTER_HTTP_REFERER"),
-        openrouter_app_title=os.environ.get("WORLD_GENERATOR_OPENROUTER_APP_TITLE"),
-        llm_max_tokens=int(os.environ.get("WORLD_GENERATOR_LLM_MAX_TOKENS", "768")),
-        llm_temperature=float(os.environ.get("WORLD_GENERATOR_LLM_TEMPERATURE", "0.65")),
+        openrouter_http_referer=os.environ.get("WORLDWRIGHT_OPENROUTER_HTTP_REFERER"),
+        openrouter_app_title=os.environ.get("WORLDWRIGHT_OPENROUTER_APP_TITLE"),
+        llm_max_tokens=int(os.environ.get("WORLDWRIGHT_LLM_MAX_TOKENS", "768")),
+        llm_temperature=float(os.environ.get("WORLDWRIGHT_LLM_TEMPERATURE", "0.65")),
         jwt_secret=jwt_secret,
-        jwt_expires_minutes=int(os.environ.get("WORLD_GENERATOR_JWT_EXPIRES_MINUTES", "1440")),
-        allow_signup=(os.environ.get("WORLD_GENERATOR_ALLOW_SIGNUP", "true").strip().lower() == "true"),
+        jwt_expires_minutes=int(os.environ.get("WORLDWRIGHT_JWT_EXPIRES_MINUTES", "1440")),
+        allow_signup=(os.environ.get("WORLDWRIGHT_ALLOW_SIGNUP", "true").strip().lower() == "true"),
     )

@@ -812,7 +812,7 @@ wheels = [
 ]
 
 [[package]]
-name = "world-generator"
+name = "worldwright"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

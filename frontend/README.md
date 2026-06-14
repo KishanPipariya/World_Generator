@@ -1,4 +1,4 @@
-# World Generator Frontend
+# Worldwright Frontend
 
 React, TypeScript, and Vite client for the world wiki reader and canon tools.
 

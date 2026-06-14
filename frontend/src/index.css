@@ -2,22 +2,36 @@
 
 :root {
   /* Color Palette */
-  --bg-primary: #0a0a0f;
-  --bg-secondary: #13131c;
-  --bg-tertiary: #1f1f2e;
+  --bg-primary: #08070d;
+  --bg-secondary: #12111c;
+  --bg-tertiary: #1d1a2a;
   
-  --accent-primary: #7c3aed; /* Violet */
-  --accent-secondary: #3b82f6; /* Blue */
-  --accent-tertiary: #ec4899; /* Pink */
+  --accent-primary: #8b5cf6; /* Violet */
+  --accent-secondary: #14b8a6; /* Teal */
+  --accent-tertiary: #d97706; /* Gold */
+  --accent-gold: #f5c86a;
+  --accent-gold-strong: #f59e0b;
+  --accent-teal: #2dd4bf;
+  --accent-rune: #c084fc;
   
   --text-primary: #f8fafc;
-  --text-secondary: #cbd5e1;
-  --text-muted: #94a3b8;
+  --text-secondary: #d6d3e6;
+  --text-muted: #9ca3af;
   --focus-ring: #facc15;
   --focus-ring-outer: rgba(250, 204, 21, 0.34);
   
-  --border-color: rgba(255, 255, 255, 0.1);
-  --glass-bg: rgba(19, 19, 28, 0.6);
+  --border-color: rgba(245, 200, 106, 0.16);
+  --border-cool: rgba(45, 212, 191, 0.22);
+  --glass-bg: rgba(18, 17, 28, 0.72);
+  --panel-bg: linear-gradient(145deg, rgba(28, 25, 42, 0.88), rgba(13, 12, 21, 0.9));
+  --panel-bg-soft: linear-gradient(145deg, rgba(34, 29, 50, 0.72), rgba(13, 12, 21, 0.78));
+  --panel-border: rgba(245, 200, 106, 0.18);
+  --paper-bg: #fbf5e6;
+  --paper-edge: #d7bd82;
+  --hover-glow: 0 0 0 1px rgba(245, 200, 106, 0.26), 0 16px 48px rgba(8, 7, 13, 0.38), 0 0 34px rgba(45, 212, 191, 0.08);
+  --shadow-sm: 0 8px 22px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 18px 46px rgba(0, 0, 0, 0.34);
+  --shadow-lg: 0 26px 70px rgba(0, 0, 0, 0.46);
   
   /* Radii */
   --radius-sm: 0.25rem;
@@ -27,9 +41,10 @@
   --radius-full: 9999px;
   
   /* Transitions */
-  --transition-fast: 0.15s ease;
-  --transition-normal: 0.3s ease;
-  --transition-slow: 0.5s ease;
+  --transition-fast: 0.16s ease;
+  --transition-normal: 0.28s ease;
+  --transition-slow: 0.55s ease;
+  --motion-rise: 0.28s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 * {
@@ -40,11 +55,27 @@
 
 body {
   font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  background-color: var(--bg-primary);
+  background:
+    radial-gradient(circle at 16% -10%, rgba(139, 92, 246, 0.22), transparent 32rem),
+    radial-gradient(circle at 86% 8%, rgba(45, 212, 191, 0.12), transparent 28rem),
+    linear-gradient(180deg, #0c0a14 0%, var(--bg-primary) 44%, #07060a 100%);
   color: var(--text-primary);
   line-height: 1.6;
   min-height: 100vh;
   overflow-x: hidden;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(245, 200, 106, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(245, 200, 106, 0.028) 1px, transparent 1px);
+  background-size: 54px 54px;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.72), transparent 72%);
 }
 
 h1, h2, h3, h4, h5, h6 {
@@ -132,6 +163,7 @@ ul {
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-sm);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -146,7 +178,7 @@ ul {
 }
 
 .gradient-text {
-  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary), var(--accent-tertiary));
+  background: linear-gradient(135deg, var(--accent-gold), var(--accent-teal), var(--accent-rune));
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;

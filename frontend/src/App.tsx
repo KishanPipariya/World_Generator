@@ -29,8 +29,8 @@ function App() {
 
   useEffect(() => {
     const handleExpired = () => setUser(null);
-    window.addEventListener('world-generator-auth-expired', handleExpired);
-    return () => window.removeEventListener('world-generator-auth-expired', handleExpired);
+    window.addEventListener('worldwright-auth-expired', handleExpired);
+    return () => window.removeEventListener('worldwright-auth-expired', handleExpired);
   }, []);
 
   const handleLogout = () => {

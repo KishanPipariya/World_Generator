@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-export const AUTH_TOKEN_KEY = 'world_generator_access_token';
+export const AUTH_TOKEN_KEY = 'worldwright_access_token';
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1',
@@ -19,7 +19,7 @@ api.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem(AUTH_TOKEN_KEY);
-      window.dispatchEvent(new Event('world-generator-auth-expired'));
+      window.dispatchEvent(new Event('worldwright-auth-expired'));
     }
     return Promise.reject(error);
   },

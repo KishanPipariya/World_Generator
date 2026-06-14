@@ -53,7 +53,7 @@ export function AuthGate({ onAuthenticated }: { onAuthenticated: (user: User) =>
       <section className="auth-panel" aria-label="Account access">
         <div className="auth-heading">
           <Globe size={30} aria-hidden="true" />
-          <h1>Literary World Generator</h1>
+          <h1>Worldwright</h1>
         </div>
         <div className="auth-tabs" role="tablist" aria-label="Authentication mode">
           <button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>

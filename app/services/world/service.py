@@ -61,7 +61,7 @@ from app.services.entity_types import display_entity_type
 from app.services.markdown_export import build_markdown_export
 from app.sqlite_driver import SQLiteDriver
 
-_current_owner_id: ContextVar[str | None] = ContextVar("world_generator_owner_id", default=None)
+_current_owner_id: ContextVar[str | None] = ContextVar("worldwright_owner_id", default=None)
 
 
 def set_current_owner_id(owner_id: str) -> Token[str | None]:

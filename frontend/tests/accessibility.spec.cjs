@@ -287,7 +287,7 @@ async function checkA11y(page) {
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
-    localStorage.setItem('world_generator_access_token', 'test-token');
+    localStorage.setItem('worldwright_access_token', 'test-token');
   });
   await mockApi(page);
 });
